@@ -55,6 +55,7 @@ graph TD
     採多對多關聯設計。將 `Accounts` 與 `Employee` 實體分離，並透過 `SystemNodes` 與 `Permissions` 表建立動態選單路由機制。
 	<details>
 	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+
 	```mermaid
 	erDiagram
     %% =========================================================
@@ -120,7 +121,7 @@ graph TD
         RowVersion timestamp "樂觀鎖"       
         other 其它欄位
     }
-	```
+
 	</details>
 2.  **[進銷存主明細交易模型]**：
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
