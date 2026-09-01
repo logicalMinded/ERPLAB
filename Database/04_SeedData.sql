@@ -564,9 +564,9 @@ GO
 -- 12. 系統登入帳號 (Accounts)
 -- ========================================================
 -- 💡 系統預設測試帳號 (密碼皆採用 PBKDF2 + Identity V3 二進位封裝)
--- 👑 ADMIN： 帳號 [ user26006 / user26007 ] / 密碼 [ Default@1234 ]
--- 👤 ADVANCED_USER： 帳號 [ user26001 / user26010 ] / 密碼 [ Default@1234 ]
--- 👤 GENERAL_USER： 帳號 [ user26009 ] / 密碼 [ Default@1234 ]
+-- 👑 ADMIN： 帳號 [ user26006 / user26007 ] / 密碼 [ 1234 ]
+-- 👤 ADVANCED_USER： 帳號 [ user26001 / user26010 ] / 密碼 [ 1234 ]
+-- 👤 GENERAL_USER： 帳號 [ user26009 ] / 密碼 [ 1234 ]
 -- ========================================================
 INSERT INTO [dbo].[Accounts] (
     [EmployeeID], [Username], [PasswordHash], [IsLocked], [FailedCount], [LastLogin], [IsActive]
