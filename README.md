@@ -128,6 +128,7 @@ graph TD
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
 	<details>
 	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+
 	```mermaid
 	erDiagram
     %% =========================================================
@@ -186,11 +187,13 @@ graph TD
         LastSeq int "最後流水號"
     }
 	```
+
 	</details>
 3.  **[基礎主檔與地理連動模型]**：
     實作 `IsActive` 軟刪除機制，並與 `Base_City`、`Base_District` 建立實體外鍵約束，維持歷史單據的參照完整性。
 	<details>
 	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+
 	```mermaid
 	erDiagram
     %% =========================================================
@@ -243,6 +246,7 @@ graph TD
         other 其它欄位
     }
 	```
+
 	</details>
 
 ---
