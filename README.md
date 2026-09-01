@@ -274,5 +274,5 @@ graph TD
 ## 📸 介面展示 (Screenshots)
 
 *   **銷售戰情儀表板**：展示基於 SQL 聚合函數的營運數據與排行。[檢視截圖](./docs/screenshots/ui_sales_dashboard.png)
-*   **單據主明細作業畫面**：展示資料雙向綁定與鍵盤輸入之試算連動。[檢視操作動圖](./docs/screenshots/ui_sales_order_blind_typing.gif)
+*   **單據主明細作業畫面**：展示資料雙向綁定與鍵盤輸入之試算連動。[檢視操作動圖](./docs/screenshots/ui_sales_order_blind_typing.webp)
 *   **基礎資料維護畫面**：展示地理資訊二級連動與狀態機鎖定機制。[檢視截圖](./docs/screenshots/ui_customer_crud.png)
