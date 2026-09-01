@@ -1,0 +1,82 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.7.11925.98
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Database", "Database", "{BF6C1534-0633-469B-9A4E-A57D93388AE4}"
+	ProjectSection(SolutionItems) = preProject
+		Database\01_Schema.sql = Database\01_Schema.sql
+		Database\02_Constraints.sql = Database\02_Constraints.sql
+		Database\03_Programmability.sql = Database\03_Programmability.sql
+		Database\04_SeedData.sql = Database\04_SeedData.sql
+		Database\README.md = Database\README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{77B3B24F-E0E3-4B3F-B6AA-36AF6722591B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ERPLAB.BLL", "src\ERPLAB.BLL\ERPLAB.BLL.csproj", "{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ERPLAB.DataAccess", "src\ERPLAB.DataAccess\ERPLAB.DataAccess.csproj", "{42583CD6-892C-6D25-16B0-30D5EE0D349B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ERPLAB.Models", "src\ERPLAB.Models\ERPLAB.Models.csproj", "{53E63C70-3506-C46D-184C-9F8BEA57EBBB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ERPLAB.UI", "src\ERPLAB.UI\ERPLAB.UI.csproj", "{CA299E51-7D6E-E2CB-1E06-041A7BA8071A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{4A5EE99E-A53F-40C1-A8B1-A56DBC8135D9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "diagrams", "diagrams", "{5C0F4828-5AA9-401E-94EF-5A667F2425CA}"
+	ProjectSection(SolutionItems) = preProject
+		docs\diagrams\arch_01_3tier_topology.png = docs\diagrams\arch_01_3tier_topology.png
+		docs\diagrams\er_01_security_rbac.png = docs\diagrams\er_01_security_rbac.png
+		docs\diagrams\er_02_trading_inventory.png = docs\diagrams\er_02_trading_inventory.png
+		docs\diagrams\er_03_master_geography.png = docs\diagrams\er_03_master_geography.png
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "screenshots", "screenshots", "{74B5677A-D870-4E15-97D4-F96329F3963E}"
+	ProjectSection(SolutionItems) = preProject
+		docs\screenshots\ui_customer_crud.png = docs\screenshots\ui_customer_crud.png
+		docs\screenshots\ui_inventory_check.png = docs\screenshots\ui_inventory_check.png
+		docs\screenshots\ui_rbac_dynamic_menu.png = docs\screenshots\ui_rbac_dynamic_menu.png
+		docs\screenshots\ui_sales_dashboard.png = docs\screenshots\ui_sales_dashboard.png
+		docs\screenshots\ui_sales_order_blind_typing .gif = docs\screenshots\ui_sales_order_blind_typing .gif
+		docs\screenshots\ui_sales_order_blind_typing .webp = docs\screenshots\ui_sales_order_blind_typing .webp
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{42583CD6-892C-6D25-16B0-30D5EE0D349B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{42583CD6-892C-6D25-16B0-30D5EE0D349B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{42583CD6-892C-6D25-16B0-30D5EE0D349B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{42583CD6-892C-6D25-16B0-30D5EE0D349B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{53E63C70-3506-C46D-184C-9F8BEA57EBBB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53E63C70-3506-C46D-184C-9F8BEA57EBBB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53E63C70-3506-C46D-184C-9F8BEA57EBBB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53E63C70-3506-C46D-184C-9F8BEA57EBBB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CA299E51-7D6E-E2CB-1E06-041A7BA8071A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CA299E51-7D6E-E2CB-1E06-041A7BA8071A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CA299E51-7D6E-E2CB-1E06-041A7BA8071A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CA299E51-7D6E-E2CB-1E06-041A7BA8071A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E46DD631-BD2E-06C9-3DD0-68F17E2CA7E2} = {77B3B24F-E0E3-4B3F-B6AA-36AF6722591B}
+		{42583CD6-892C-6D25-16B0-30D5EE0D349B} = {77B3B24F-E0E3-4B3F-B6AA-36AF6722591B}
+		{53E63C70-3506-C46D-184C-9F8BEA57EBBB} = {77B3B24F-E0E3-4B3F-B6AA-36AF6722591B}
+		{CA299E51-7D6E-E2CB-1E06-041A7BA8071A} = {77B3B24F-E0E3-4B3F-B6AA-36AF6722591B}
+		{5C0F4828-5AA9-401E-94EF-5A667F2425CA} = {4A5EE99E-A53F-40C1-A8B1-A56DBC8135D9}
+		{74B5677A-D870-4E15-97D4-F96329F3963E} = {4A5EE99E-A53F-40C1-A8B1-A56DBC8135D9}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5A7E7A9F-6DBB-4012-BFED-8E439CB990F5}
+	EndGlobalSection
+EndGlobal
