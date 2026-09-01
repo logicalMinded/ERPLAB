@@ -54,7 +54,7 @@ graph TD
 1.  **[RBAC 權限與資安模型](./docs/diagrams/er_01_security_rbac.png)**：
     採多對多關聯設計。將 `Accounts` 與 `Employee` 實體分離，並透過 `SystemNodes` 與 `Permissions` 表建立動態選單路由機制。
 	<details>
-	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+	<summary><b>點擊展開 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
@@ -127,7 +127,7 @@ graph TD
 2.  **[進銷存主明細交易模型](./docs/diagrams/er_02_trading_inventory.png)**：
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
 	<details>
-	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+	<summary><b>點擊展開 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
@@ -192,7 +192,7 @@ graph TD
 3.  **[基礎主檔與地理連動模型](./docs/diagrams/er_03_master_geography.png)**：
     實作 `IsActive` 軟刪除機制，並與 `Base_City`、`Base_District` 建立實體外鍵約束，維持歷史單據的參照完整性。
 	<details>
-	<summary><b>👁️ 點擊展開 ER 圖</b></summary>
+	<summary><b>點擊展開 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
