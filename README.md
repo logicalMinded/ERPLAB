@@ -121,6 +121,7 @@ graph TD
         RowVersion timestamp "樂觀鎖"       
         other 其它欄位
     }
+    ```
 
 	</details>
 2.  **[進銷存主明細交易模型]**：
