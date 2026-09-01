@@ -3,9 +3,9 @@
 本目錄包含 ERPLAB 系統的 SQL Server 部署腳本。本專案採用純 T-SQL 構建資料庫實體，未依賴 ORM 的自動建表功能，以確保對資料完整性、併發控制與 I/O 效能的精確掌握。
 
 ## 1. 實體關聯圖 (ER Models)
-- [核心資安與 RBAC 權限模型](./docs/screenshots/ui_sales_dashboard.png)
-- [進銷存核心與主明細交易模型](../../docs/diagrams/er_02_trading_inventory.png)
-- [基礎主檔與地理連動模型](../../docs/diagrams/er_03_master_geography.png)
+- [核心資安與 RBAC 權限模型](../docs/diagrams/er_01_security_rbac.png)
+- [進銷存核心與主明細交易模型](../docs/diagrams/er_02_trading_inventory.png)
+- [基礎主檔與地理連動模型](../docs/diagrams/er_03_master_geography.png)
 
 ## 2. 資料完整性與內控設計 (Data Integrity & Control)
 
