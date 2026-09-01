@@ -67,7 +67,6 @@ graph TD
     Permissions ||--o{ RolePermissions : "(ON DELETE CASCADE)"
     Permissions |o..o{ SystemNodes : "(ON DELETE NO ACTION)     (ON UPDATE CASCADE)"
     SystemNodes |o..o{ SystemNodes : "(ON DELETE NO ACTION)"
-
     %% =========================================================
     %% 實體定義
     %% =========================================================
@@ -136,7 +135,6 @@ graph TD
     Base_District ||..o{ SalesMaster : "(ON DELETE NO ACTION)"
     SalesMaster ||..|{ SalesDetail : "(ON DELETE NO ACTION)"
     Product ||..o{ SalesDetail : "(ON DELETE NO ACTION)"
-
     %% =========================================================
     %% 實體定義 (AutoNumber 無實體 FK，故獨立展示)
     %% =========================================================
@@ -185,7 +183,6 @@ graph TD
         CurrentDate  DATE "當前日期 (滾動重置)"
         LastSeq int "最後流水號"
     }
-
 	```
 	</details>
 3.  **[基礎主檔與地理連動模型]**：
@@ -201,7 +198,6 @@ graph TD
     Base_District ||..o{ Customer : "ON DELETE NO ACTION"
     Base_District ||..o{ Vendor : "ON DELETE NO ACTION"
     Base_District ||..o{ Employee : "ON DELETE NO ACTION"
-
     %% =========================================================
     %% 實體定義
     %% =========================================================
