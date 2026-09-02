@@ -23,7 +23,7 @@
 編譯並啟動 `ERPLAB.UI` 專案後，請使用以下預設帳號登入進行測試：
 *   ADMIN： 帳號 [ `user26006` / `user26007` ] / 密碼 [ `1234` ]
 *   DVANCED_USER： 帳號 [ `user26001` / `user26010` ] / 密碼 [ `1234` ]
-*   GENERAL_USER： 帳號 [ `user26009` ] / 密碼 [ 1234 ] / 密碼 [ `1234` ]
+*   GENERAL_USER： 帳號 [ `user26009` ] / 密碼 [ `1234` ]
 
 ---
 
@@ -278,6 +278,47 @@ graph TD
 
 ## 📸 介面展示 (Screenshots)
 
-*   **銷售戰情儀表板**：展示基於 SQL 聚合函數的營運數據與排行。[檢視截圖](./docs/screenshots/ui_sales_dashboard.png)
-*   **單據主明細作業畫面**：展示資料雙向綁定與鍵盤輸入之試算連動。[檢視操作動圖](./docs/screenshots/ui_sales_order_blind_typing.webp)
-*   **基礎資料維護畫面**：展示地理資訊二級連動與狀態機鎖定機制。[檢視截圖](./docs/screenshots/ui_customer_crud.png)
+<details>
+<summary><b>📊 銷售戰情儀表板 (BI Dashboard)</b> ── <i>點擊展開檢視</i></summary>
+
+展示基於 SQL 聚合函數的營運數據與排行，提供管理層檢視即時營運指標。
+
+![戰情儀表板](./docs/screenshots/ui_sales_dashboard.png)
+
+</details>
+
+<details>
+<summary><b>⌨️ 單據主明細作業畫面 (Master-Detail Operations)</b> ── <i>點擊展開檢視</i></summary>
+
+以銷貨單為例，展示資料雙向綁定與鍵盤輸入之試算連動，並實作單據狀態機的 UI 唯讀鎖定。
+
+![銷貨單實機展示](./docs/screenshots/ui_sales_order_blind_typing.gif)
+
+</details>
+
+<details>
+<summary><b>📦 庫存盤點作業 (Inventory Check)</b> ── <i>點擊展開檢視</i></summary>
+
+展示雙軌庫存比對機制（帳面與實盤數量）。實作盤點單的狀態流轉，並於過帳時透過差異沖平邏輯自動調整庫存，確保帳實一致。
+
+![庫存盤點作業](./docs/screenshots/ui_inventory_check.png)
+
+</details>
+
+<details>
+<summary><b>📇 基礎資料維護 (Master Data Management)</b> ── <i>點擊展開檢視</i></summary>
+
+以客戶基本檔為例，展示地理資訊二級連動、自訂元件狀態更新與基礎資料的軟刪除 (Soft Delete) 實作。
+
+![客戶基本檔](./docs/screenshots/ui_customer_crud.png)
+
+</details>
+
+<details>
+<summary><b>🔐 動態導覽選單與權限控制 (Dynamic Menu & RBAC)</b> ── <i>點擊展開檢視</i></summary>
+
+結合 FlowLayoutPanel 實作摺疊式導覽介面。系統會依據登入者之權限矩陣動態生成選單節點，並透過反射 (Reflection) 機制動態載入對應的業務模組實體。
+
+![動態選單與權限](./docs/screenshots/ui_rbac_dynamic_menu.png)
+
+</details>
