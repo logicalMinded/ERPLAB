@@ -50,6 +50,8 @@ DAL -.-> Models
 *   **ERPLAB.BLL**：負責跨模組商業規則運算、單號配發機制與狀態流轉檢核。
 *   **ERPLAB.DataAccess**：負責 SQL 參數化封裝、批次寫入與非同步資料庫 I/O。
 
+**[備份圖檔連結](./docs/diagrams/arch_01_3tier_topology.png)**
+
 ---
 
 ## 🗄️ 資料庫實體模型 (ER Models)
