@@ -133,7 +133,7 @@ DAL -.-> Models
 	</details>
 2.  **[進銷存主明細交易模型](./docs/diagrams/er_02_trading_inventory.png)**：
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
-    (此 Master-Detail 資料處理架構與 TVP 批次寫入機制已具備模組化特性，並同步實作於進貨單 (PurchaseMaster/Detail) 與庫存盤點單 (InventoryMaster/Detail) 等核心業務模組中。)
+    此 Master-Detail 資料處理架構與 TVP 批次寫入機制已具備模組化特性，並同步實作於進貨單 (PurchaseMaster/Detail) 與庫存盤點單 (InventoryMaster/Detail) 等核心業務模組中。
 	<details>
 	<summary><b>🔀點擊以展開/摺疊 ER 圖</b></summary>
 
