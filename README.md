@@ -31,7 +31,11 @@
 
 本系統嚴格落實專案參考隔離，確保各層職責單一化：
 <details>
-<summary>![點擊展開架構圖](https://img.shields.io/badge/．-點擊展開架構圖-blue)</summary>
+<summary>
+<img src="https://img.shields.io/badge/.-%E9%BB%9E%E6%93%8A%E5%B1%95%E9%96%8B%E6%9E%B6%E6%A7%8B%E5%9C%96-blue?style=flat-square" alt="展開架構圖" style="cursor:pointer;">
+</summary>
+
+<div align="center">
 
 ```mermaid
 graph TD
@@ -43,6 +47,8 @@ UI -.-> Models[ERPLAB.Models <br> 領域模型與 DTO]
 BLL -.-> Models
 DAL -.-> Models
 ```
+
+</div>
 
 </details>
 
