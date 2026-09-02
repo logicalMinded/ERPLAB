@@ -38,7 +38,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "screenshots", "screenshots"
 		docs\screenshots\ui_inventory_check.png = docs\screenshots\ui_inventory_check.png
 		docs\screenshots\ui_rbac_dynamic_menu.png = docs\screenshots\ui_rbac_dynamic_menu.png
 		docs\screenshots\ui_sales_dashboard.png = docs\screenshots\ui_sales_dashboard.png
-		docs\screenshots\ui_sales_order_blind_typing.gif = docs\screenshots\ui_sales_order_blind_typing.gif
 		docs\screenshots\ui_sales_order_blind_typing.webp = docs\screenshots\ui_sales_order_blind_typing.webp
 	EndProjectSection
 EndProject
