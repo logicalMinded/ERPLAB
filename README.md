@@ -31,11 +31,7 @@
 
 本系統嚴格落實專案參考隔離，確保各層職責單一化：
 <details>
-<summary>
-<img src="https://img.shields.io/badge/.-%E9%BB%9E%E6%93%8A%E5%B1%95%E9%96%8B%E6%9E%B6%E6%A7%8B%E5%9C%96-blue?style=flat-square" alt="展開架構圖" style="cursor:pointer;">
-</summary>
-
-<div align="center">
+<summary><b>🔀點擊以展開/摺疊架構圖</b></summary>
 
 ```mermaid
 graph TD
@@ -47,8 +43,6 @@ UI -.-> Models[ERPLAB.Models <br> 領域模型與 DTO]
 BLL -.-> Models
 DAL -.-> Models
 ```
-
-</div>
 
 </details>
 
@@ -65,7 +59,7 @@ DAL -.-> Models
 1.  **[RBAC 權限與資安模型](./docs/diagrams/er_01_security_rbac.png)**：
     採多對多關聯設計。將 `Accounts` 與 `Employee` 實體分離，並透過 `SystemNodes` 與 `Permissions` 表建立動態選單路由機制。
 	<details>
-	<summary><b>點擊展開 ER 圖</b></summary>
+	<summary><b>🔀點擊以展開/摺疊 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
@@ -138,7 +132,7 @@ DAL -.-> Models
 2.  **[進銷存主明細交易模型](./docs/diagrams/er_02_trading_inventory.png)**：
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
 	<details>
-	<summary><b>點擊展開 ER 圖</b></summary>
+	<summary><b>🔀點擊以展開/摺疊 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
@@ -203,7 +197,7 @@ DAL -.-> Models
 3.  **[基礎主檔與地理連動模型](./docs/diagrams/er_03_master_geography.png)**：
     實作 `IsActive` 軟刪除機制，並與 `Base_City`、`Base_District` 建立實體外鍵約束，維持歷史單據的參照完整性。
 	<details>
-	<summary><b>點擊展開 ER 圖</b></summary>
+	<summary><b>🔀點擊以展開/摺疊 ER 圖</b></summary>
 
 	```mermaid
 	erDiagram
