@@ -282,6 +282,29 @@ DAL -.-> Models
 
 ---
 
+## 🔍 核心原始碼導覽 (Core Code Navigation)
+
+本專案之核心價值在於底層基礎設施之封裝與 I/O 效能最佳化。以下列出系統中具代表性之關鍵模組與實體路徑，供開發者或架構檢視者快速掌握本系統之底層實作細節：
+
+**1. 全域交易安全沙盒** : [`ERPLAB.UI/Core/BasePage.cs`](./src/ERPLAB.UI/Core/BasePage.cs)
+將所有資料庫 I/O 透過委派 (Delegate) 封裝，集中攔截 `SqlException` 與 `DBConcurrencyException`，確保 UI 層的純潔性與錯誤轉譯的一致性。
+```csharp
+protected async Task<bool> SafeExecuteAsync(Func<Task> dbAction, Func<Task> reloadDataAction = null)
+{
+    try { await dbAction(); return true; }
+    catch (DBConcurrencyException cx) { /* 樂觀鎖攔截與重載邏輯 */ }
+    catch (SqlException sqlex) { /* 約束衝突轉譯邏輯 */ }
+}
+```
+
+**2. 零配置密碼學引擎** : [`ERPLAB.DataAccess/Core/CryptoHelper.cs`](./src/ERPLAB.DataAccess/Core/CryptoHelper.cs)
+展示如何使用 `Span<byte>` 與 `BinaryPrimitives` 進行記憶體物理切片，實作相容 Identity V3 的二進位 PBKDF2 演算法。
+
+**3. TVP 分散式交易引擎** : [`ERPLAB.DataAccess/Repositories/SalesRepository.cs`](./src/ERPLAB.DataAccess/Repositories/SalesRepository.cs)
+展示 `CreateSalesOrderAsync` 中，主明細表如何透過 `SqlTransaction` 與表值參數 (TVP) 達成單次 I/O 批次寫入與微交易獨立取號。
+
+---
+
 ## 📸 介面展示 (Screenshots)
 
 <details>
