@@ -255,24 +255,24 @@ graph TD
 ## ⚙️ 核心工程實作 (Technical Implementations)
 
 ### 1. 批次寫入與取號機制最佳化 (Batch Processing & Micro-Transaction)
-*   **考量**：逐筆寫入單據明細易造成連線池佔用與網路通訊延遲；而傳統取號邏輯在高併發時易引發資料庫鎖定競爭 (Lock Contention)。
-*   **實作**：建立使用者自訂資料表型別 `UDTT`，透過表值參數 `TVP, Table-Valued Parameters` 將明細清單轉為 `DataTable` 執行單次批次寫入。另將「單號生成」邏輯抽離為獨立的微交易，配合 `UPDLOCK` 處理取號。
-*   **效益**：大幅降低資料庫往返通訊次數 (Round-trips)，減少高頻寫入時的鎖定等待時間，提升整體 I/O 處理效率；並透過 `SqlTransaction` 確保主檔與明細寫入的資料一致性。
+*   **考量**：逐筆寫入單據明細易造成連線池佔用與網路通訊延遲；而傳統取號邏輯在**高併發**時易引發**資料庫鎖定競爭 (Lock Contention)**。
+*   **實作**：建立使用者自訂資料表型別 (`` `UDTT` ``)，透過**表值參數 (TVP, Table-Valued Parameters)** 將明細清單轉為 `` `DataTable` `` 執行單次批次寫入。另將「單號生成」邏輯抽離為獨立的**微交易 (Micro-transaction)**，配合 `` `UPDLOCK` `` 處理取號。
+*   **效益**：大幅降低資料庫往返通訊次數 (Round-trips)，減少高頻寫入時的鎖定等待時間，提升整體 **I/O 處理效率**；並透過 `` `SqlTransaction` `` 確保主檔與明細寫入的**資料一致性 (ACID)**。
 
 ### 2. 樂觀鎖併發控制 (Optimistic Concurrency)
-*   **考量**：多位使用者並行編輯同一單據時，易產生「遺失更新 (Lost Update)」或庫存數據不一致的風險。
-*   **實作**：於業務主檔配置 `[RowVersion] TIMESTAMP` 欄位實作樂觀鎖 `Optimistic Locking`。資料存取層執行 UPDATE 時，透過 `ExecuteScalarAsync` 搭配 `OUTPUT INSERTED` 比對時間戳記，若受影響資料列為 0 則拋出 DBConcurrencyException。
-*   **效益**：在不提升資料庫交易隔離層級的前提下，有效攔截併發衝突。發生衝突時引導前端重新載入最新狀態，確保資料寫入與庫存異動的一致性。
+*   **考量**：多位使用者並行編輯同一單據時，易產生**「遺失更新 (Lost Update)」**或庫存數據不一致的風險。
+*   **實作**：於業務主檔配置 `` `[RowVersion] TIMESTAMP` `` 欄位實作**樂觀鎖 (Optimistic Locking)**。資料存取層執行 `` `UPDATE` `` 時，透過 `` `ExecuteScalarAsync` `` 搭配 `` `OUTPUT INSERTED` `` 精確比對時間戳記，若受影響資料列為 0 則瞬間拋出 `` `DBConcurrencyException` ``。
+*   **效益**：在不提升資料庫交易隔離層級的前提下，有效攔截**併發衝突**。發生衝突時引導前端重新載入最新狀態，確保資料寫入與庫存異動的**絕對一致性**。
 
 ### 3. 記憶體管理與密碼學實作 (Memory-Optimized Cryptography)
-*   **考量**：頻繁的密碼雜湊運算易產生大量短生命週期的字串與陣列物件，增加 GC (Garbage Collection) 負擔；常規字串比對亦存在時序攻擊 (Timing Attack) 的安全疑慮。
-*   **實作**：密碼驗證模組採用 `PBKDF2` 演算法，並相容 `Identity V3` 的 `Big-Endian` 二進位封裝格式。處理過程中採用 `stackalloc` 與 `Span<byte>` 進行記憶體操作。
-*   **效益**：避免頻繁生成短生命週期的 `byte[]` 陣列，降低 Garbage Collection (GC) 觸發頻率；採用 `CryptographicOperations.FixedTimeEquals` 進行常數時間比對，提升防禦時序攻擊的安全性。
+*   **考量**：頻繁的密碼雜湊運算易產生大量短生命週期的字串與陣列物件，增加 **GC (垃圾回收) 壓力**；常規字串比對亦存在**時序攻擊 (Timing Attack)** 的安全疑慮。
+*   **實作**：密碼驗證模組採用 `` `PBKDF2` `` 演算法，並相容 `` `Identity V3` `` 的 Big-Endian 二進位封裝格式。處理過程中採用 `` `stackalloc` `` 與 `` `Span<byte>` `` 進行記憶體物理切片操作。
+*   **效益**：達成**零記憶體配置 (Zero-Allocation)**，避免頻繁生成短生命週期的 `` `byte[]` `` 陣列，大幅降低 GC 觸發頻率；採用 `` `CryptographicOperations.FixedTimeEquals` `` 進行常數時間比對，物理免疫**時序攻擊**。
 
 ### 4. 資料綁定與 UI 狀態機 (Data Binding & State Machine)
-*   **考量**：傳統 WinForms 的頻繁資料更新易引發事件連鎖觸發 (Event Cascading)、畫面閃爍，以及焦點狀態不同步。
-*   **實作**：擴充 `BindingList<T>` 自訂 ExtendedBindingList，實作 `AddRange` 暫停事件觸發機制。透過 `BindingSource` 統一管理資料游標，並於 `CellEndEdit` 事件進行記憶體內計算與開窗查詢。設計 `BasePage` 基底類別，依據單據狀態 (草稿/過帳/註銷/作廢) 動態控制介面元件的 `ReadOnly` 與 `Enabled` 屬性。
-*   **效益**：減少 DataGridView 大量載入時的重繪次數，提升鍵盤連續輸入作業的流暢度。統一控管表單狀態，避免使用者在錯誤的單據生命週期下執行存檔或修改操作。
+*   **考量**：傳統 WinForms 的頻繁資料更新易引發**事件雪崩 (Event Cascading)**、畫面閃爍，以及焦點狀態不同步。
+*   **實作**：擴充 `` `BindingList<T>` `` 自訂 `` `ExtendedBindingList` ``，實作 `` `AddRange` `` 暫停事件觸發機制以凍結重繪。透過 `` `BindingSource` `` 統一管理資料游標，並於 `` `CellEndEdit` `` 事件進行 O(1) 記憶體內計算與開窗查詢。設計 `` `BasePage` `` 基底類別，依據**單據 4 維狀態機** (草稿/過帳/註銷/作廢) 動態控制介面元件的 `` `ReadOnly` `` 與 `` `Enabled` `` 屬性。
+*   **效益**：大幅減少 `` `DataGridView` `` 大量載入時的重繪次數，達成業務員雙手不離鍵盤的**極速盲打體驗**。統一控管表單狀態，以**物理斷路**避免使用者在錯誤的單據生命週期下執行非法存檔或修改操作。
 
 ---
 
