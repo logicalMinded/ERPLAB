@@ -30,21 +30,22 @@
 ## 🏛️ 系統架構 (System Architecture)
 
 本系統嚴格落實專案參考隔離，確保各層職責單一化：
-	<details>
-	<summary><b>點擊展開架構圖</b></summary>
+<details>
+<summary><b>點擊展開架構圖</b></summary>
 
-    ```mermaid
-    graph TD
-    UI[ERPLAB.UI <br> 表現層] -->|Method Call| BLL
-    BLL[ERPLAB.BLL <br> 商業邏輯層] -->|Delegate Execution| DAL
-    DAL[ERPLAB.DataAccess <br> 資料存取層] -->|TDS Protocol| DB[(SQL Server)]
+```mermaid
+graph TD
+UI[ERPLAB.UI <br> 表現層] -->|Method Call| BLL
+BLL[ERPLAB.BLL <br> 商業邏輯層] -->|Delegate Execution| DAL
+DAL[ERPLAB.DataAccess <br> 資料存取層] -->|TDS Protocol| DB[(SQL Server)]
     
-    UI -.-> Models[ERPLAB.Models <br> 領域模型與 DTO]
-    BLL -.-> Models
-    DAL -.-> Models
-    ```
+UI -.-> Models[ERPLAB.Models <br> 領域模型與 DTO]
+BLL -.-> Models
+DAL -.-> Models
+```
 
-	</details>
+</details>
+
 *   **ERPLAB.UI**：負責視窗生命週期、狀態機控制與資料雙向綁定。不具備資料庫存取套件參考。
 *   **ERPLAB.BLL**：負責跨模組商業規則運算、單號配發機制與狀態流轉檢核。
 *   **ERPLAB.DataAccess**：負責 SQL 參數化封裝、批次寫入與非同步資料庫 I/O。
