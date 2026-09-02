@@ -31,7 +31,7 @@
 
 本系統嚴格落實專案參考隔離，確保各層職責單一化：
 <details>
-<summary><b>![點擊展開架構圖](https://img.shields.io/badge/-點擊展開架構圖 -blue)</b></summary>
+<summary><b>![點擊展開架構圖](https://img.shields.io/badge/ -點擊展開架構圖-blue)</b></summary>
 
 ```mermaid
 graph TD
