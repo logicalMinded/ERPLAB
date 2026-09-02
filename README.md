@@ -133,6 +133,7 @@ DAL -.-> Models
 	</details>
 2.  **[進銷存主明細交易模型](./docs/diagrams/er_02_trading_inventory.png)**：
     實作 Master-Detail 架構。單據過帳後受 `INSTEAD OF DELETE` 觸發程序保護；庫存異動採用差異沖平演算法確保帳實一致。
+    (此 Master-Detail 資料處理架構與 TVP 批次寫入機制已具備模組化特性，並同步實作於進貨單 (PurchaseMaster/Detail) 與庫存盤點單 (InventoryMaster/Detail) 等核心業務模組中。)
 	<details>
 	<summary><b>🔀點擊以展開/摺疊 ER 圖</b></summary>
 
@@ -328,7 +329,7 @@ protected async Task<bool> SafeExecuteAsync(Func<Task> dbAction, Func<Task> relo
 <details>
 <summary><b>📦 庫存盤點作業 (Inventory Check)</b> ── <i>點擊展開檢視</i></summary>
 
-展示雙軌庫存比對機制（帳面與實盤數量）。實作盤點單的狀態流轉，並於過帳時透過差異沖平邏輯自動調整庫存，確保帳實一致。
+展示雙軌庫存比對機制（帳面與實盤數量）。實作盤點單的狀態流轉，並於過帳時透過差異沖平邏輯自動調整庫存(於資料庫底層運算 `實盤 - 帳面快照` 並透過 Transaction 寫回實體庫存)，確保帳實一致。
 
 ![庫存盤點作業](./docs/screenshots/ui_inventory_check.png)
 
