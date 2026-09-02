@@ -33,7 +33,7 @@
 	<details>
 	<summary><b>點擊展開架構圖</b></summary>
 
-```mermaid
+    ```mermaid
     graph TD
     UI[ERPLAB.UI <br> 表現層] -->|Method Call| BLL
     BLL[ERPLAB.BLL <br> 商業邏輯層] -->|Delegate Execution| DAL
@@ -42,7 +42,7 @@
     UI -.-> Models[ERPLAB.Models <br> 領域模型與 DTO]
     BLL -.-> Models
     DAL -.-> Models
-```
+    ```
 
 	</details>
 *   **ERPLAB.UI**：負責視窗生命週期、狀態機控制與資料雙向綁定。不具備資料庫存取套件參考。
