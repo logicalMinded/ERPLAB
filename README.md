@@ -34,7 +34,7 @@
 	<summary><b>點擊展開架構圖</b></summary>
 
 ```mermaid
-graph TD
+    graph TD
     UI[ERPLAB.UI <br> 表現層] -->|Method Call| BLL
     BLL[ERPLAB.BLL <br> 商業邏輯層] -->|Delegate Execution| DAL
     DAL[ERPLAB.DataAccess <br> 資料存取層] -->|TDS Protocol| DB[(SQL Server)]
