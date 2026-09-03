@@ -263,11 +263,11 @@ DAL -.-> Models
 
 ### 1. 批次寫入與取號機制最佳化 (Batch Processing & Micro-Transaction)
 *   **⚠️考量**：逐筆寫入單據明細易造成連線池佔用與網路通訊延遲；而傳統取號邏輯在***高併發***時易引發***資料庫鎖定競爭 (Lock Contention)***。
-*   **🛠️實作**：建立使用者自訂資料表型別 (`UDTT`)，透過***表值參數 (TVP, Table-Valued Parameters)*** 將明細清單轉為 `DataTable` 執行單次批次寫入。另將「單號生成」邏輯抽離為獨立的***微交易 (Micro-transaction)***，配合 `` `UPDLOCK` `` 處理取號。
+*   **🛠️實作**：建立使用者自訂資料表型別 (`UDTT`)，透過***表值參數 (TVP, Table-Valued Parameters)*** 將明細清單轉為 `DataTable` 執行單次批次寫入。另將「單號生成」邏輯抽離為獨立的***微交易 (Micro-transaction)***，配合 `UPDLOCK` 處理取號。
 *   **💡效益**：大幅降低資料庫往返通訊次數 (Round-trips)，減少高頻寫入時的鎖定等待時間，提升整體 ***I/O 處理效率***；並透過 `SqlTransaction` 確保主檔與明細寫入的***資料一致性 (ACID)***。
 
 ### 2. 樂觀鎖併發控制 (Optimistic Concurrency)
-*   **⚠️考量**：多位使用者並行編輯同一單據時，易產生***「遺失更新 (Lost Update)」***或庫存數據不一致的風險。
+*   **⚠️考量**：多位使用者並行編輯同一單據時，易產生***遺失更新 (Lost Update)***或庫存數據不一致的風險。
 *   **🛠️實作**：於業務主檔配置 `[RowVersion] TIMESTAMP` 欄位實作***樂觀鎖 (Optimistic Locking)***。資料存取層執行 `UPDATE` 時，透過 `ExecuteScalarAsync` 搭配 `OUTPUT INSERTED` 精確比對時間戳記，若受影響資料列為 0 則瞬間拋出 `DBConcurrencyException`。
 *   **📈效益**：在不提升資料庫交易隔離層級的前提下，有效攔截***併發衝突***。發生衝突時引導前端重新載入最新狀態，確保資料寫入與庫存異動的***絕對一致性***。
 
