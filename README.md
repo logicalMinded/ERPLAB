@@ -1,4 +1,6 @@
-# ERPLAB 企業進銷存管理系統
+# **ERPLAB 企業進銷存系統**
+
+## **高併發交易與內控防禦模組**
 
 ![C#](https://img.shields.io/badge/C%23-9.0%2B-blue) ![.NET](https://img.shields.io/badge/.NET-8.0-purple) ![SQL Server](https://img.shields.io/badge/SQL_Server-2022-red) ![WinForms](https://img.shields.io/badge/WinForms-Desktop-lightgrey)
 
