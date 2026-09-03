@@ -267,7 +267,7 @@ DAL -.-> Models
 *   **💡效益**：大幅降低資料庫往返通訊次數 (Round-trips)，減少高頻寫入時的鎖定等待時間，提升整體 ***I/O 處理效率***；並透過 `SqlTransaction` 確保主檔與明細寫入的***資料一致性 (ACID)***。
 
 ### 2. 樂觀鎖併發控制 (Optimistic Concurrency)
-*   **⚠️考量**：多位使用者並行編輯同一單據時，易產生***遺失更新 (Lost Update)***或庫存數據不一致的風險。
+*   **⚠️考量**：多位使用者並行編輯同一單據時，易產生 ***遺失更新 (Lost Update)*** 或庫存數據不一致的風險。
 *   **🛠️實作**：於業務主檔配置 `[RowVersion] TIMESTAMP` 欄位實作***樂觀鎖 (Optimistic Locking)***。資料存取層執行 `UPDATE` 時，透過 `ExecuteScalarAsync` 搭配 `OUTPUT INSERTED` 精確比對時間戳記，若受影響資料列為 0 則瞬間拋出 `DBConcurrencyException`。
 *   **📈效益**：在不提升資料庫交易隔離層級的前提下，有效攔截***併發衝突***。發生衝突時引導前端重新載入最新狀態，確保資料寫入與庫存異動的***絕對一致性***。
 
