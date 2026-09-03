@@ -278,7 +278,7 @@ DAL -.-> Models
 
 ### 4. 資料綁定與 UI 狀態機 (Data Binding & State Machine)
 *   **⚠️考量**：傳統 WinForms 的頻繁資料更新易引發***事件雪崩 (Event Cascading)***、畫面閃爍，以及焦點狀態不同步。
-*   **🛠️實作**：擴充 `BindingList<T>` 自訂 `ExtendedBindingList`，實作 `AddRange` 暫停事件觸發機制以凍結重繪。透過 `BindingSource` 統一管理資料游標，並於 `CellEndEdit` 事件進行 O(1) 記憶體內計算與開窗查詢。設計 `BasePage` 基底類別，依據**單據 4 維狀態機** (草稿/過帳/註銷/作廢) 動態控制介面元件的 `ReadOnly` 與 `Enabled` 屬性。
+*   **🛠️實作**：擴充 `BindingList<T>` 自訂 `ExtendedBindingList`，實作 `AddRange` 暫停事件觸發機制以凍結重繪。透過 `BindingSource` 統一管理資料游標，並於 `CellEndEdit` 事件進行 O(1) 記憶體內計算與開窗查詢。設計 `BasePage` 基底類別，依據***單據 4 維狀態機*** (草稿/過帳/註銷/作廢) 動態控制介面元件的 `ReadOnly` 與 `Enabled` 屬性。
 *   **📈效益**：大幅減少 `DataGridView` 大量載入時的重繪次數，達成業務員雙手不離鍵盤的**極速盲打體驗**。統一控管表單狀態，以**物理斷路**避免使用者在錯誤的單據生命週期下執行非法存檔或修改操作。
 
 ---
