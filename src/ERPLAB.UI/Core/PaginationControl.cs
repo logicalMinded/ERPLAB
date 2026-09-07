@@ -1,16 +1,19 @@
 ﻿namespace ERPLAB.UI.Core
 {
     /// <summary>
-    /// 共用分頁底座控制項
-    /// 核心職責：封裝頁碼計算、越界防禦、UI 物理鎖死，並對外曝露單一的 PageChanged 事件。
+    /// 共用分頁控制項 (Pagination Control)。
+    /// 繼承自 UserControl，負責封裝分頁運算、邊界檢核 (Boundary Checking) 與 UI 狀態管理。
+    /// 透過對外暴露 PageChanged 事件與宿主表單 (Host Form) 解耦，實現標準化之分頁操作介面。
     /// </summary>
     public partial class PaginationControl : UserControl
     {
         // =====================================================================
-        // 📢 [對外通訊合約] 
+        // 事件合約 (Event Contracts)
         // =====================================================================
+
         /// <summary>
-        /// 當使用者要求翻頁、或更改每頁筆數時觸發
+        /// 分頁狀態變更事件。
+        /// 當使用者觸發翻頁操作或變更每頁顯示筆數時觸發，通知宿主表單重新載入資料。
         /// </summary>
         public event EventHandler PageChanged;
 
@@ -18,7 +21,7 @@
 
         public int PageSize => cmbPageSize.SelectedValue != null ? (int)cmbPageSize.SelectedValue : 10;
 
-        // 內部狀態記憶
+        // 內部狀態 (Internal State)
         private int _totalCount = 0;
         private int _totalPages = 1;
         private bool _isBrowseMode = true;
@@ -32,7 +35,6 @@
 
         private void InitControls()
         {
-            // 初始化陣列綁定
             cmbPageSize.DataSource = new int[] { 10, 50, 100, 200 };
             cmbPageSize.SelectedIndex = 0; // 預設 10 筆
         }
@@ -47,11 +49,13 @@
             cmbPageSize.SelectedIndexChanged += (s, e) =>
             {
                 if (!_isBrowseMode) return;
-                CurrentPage = 1; // 改筆數強迫回第一頁
+
+                // 變更分頁筆數時，重置為第一頁
+                CurrentPage = 1;
                 PageChanged?.Invoke(this, EventArgs.Empty);
             };
 
-            // 手動跳頁防呆
+            // 頁碼輸入框之防呆與邊界驗證
             txtCurrentPage.KeyDown += TxtCurrentPage_KeyDown;
             txtCurrentPage.Leave += (s, e) => txtCurrentPage.Text = CurrentPage.ToString();
         }
@@ -73,7 +77,7 @@
                 }
                 else
                 {
-                    MessageBox.Show($"請輸入 1 到 {_totalPages} 之間的有效頁碼！", "越界", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show($"請輸入 1 到 {_totalPages} 之間的有效頁碼！", "輸入越界", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtCurrentPage.Text = CurrentPage.ToString();
                 }
             }
@@ -89,15 +93,19 @@
                 return;
 
             CurrentPage = targetPage;
-            PageChanged?.Invoke(this, EventArgs.Empty); // 💡 通知外部 (如 CustomerPage) 去撈資料
+
+            // 觸發事件，通知宿主表單執行資料查詢
+            PageChanged?.Invoke(this, EventArgs.Empty);
         }
 
         // =====================================================================
-        // 🧮 [外部呼叫 API] 供宿主表單控制分頁器
+        // 公開方法 (Public API)
+        // 供宿主表單呼叫，以進行狀態同步與 UI 更新。
         // =====================================================================
 
         /// <summary>
-        /// 宿主表單撈完資料後，呼叫此方法將總筆數餵給分頁器，自動計算並重繪 UI
+        /// 綁定總資料筆數。
+        /// 由宿主表單於資料查詢後呼叫，用以自動重新計算總頁數，並觸發 UI 狀態更新。
         /// </summary>
         public void BindTotalCount(int totalCount)
         {
@@ -121,7 +129,8 @@
         }
 
         /// <summary>
-        /// 宿主表單狀態改變時，通知分頁器鎖定或解鎖
+        /// 設定 UI 互動狀態。
+        /// 供宿主表單於編輯模式或特定作業中，統一鎖定或解鎖分頁控制項之操作權限。
         /// </summary>
         public void SetUIState(bool isBrowseMode)
         {
@@ -130,7 +139,8 @@
         }
 
         /// <summary>
-        /// 供宿主表單在「搜尋」或「重整」時，強迫頁碼歸零
+        /// 重置為第一頁。
+        /// 供宿主表單於執行新查詢條件或重新整理時呼叫。
         /// </summary>
         public void ResetToFirstPage()
         {
@@ -138,7 +148,9 @@
         }
 
         /// <summary>
-        /// 供宿主表單在發生「幽靈頁碼踩空」時，強迫物理修正頁碼
+        /// 強制修正當前頁碼。
+        /// 處理極端情境 (如：刪除該頁最後一筆資料時導致當前頁碼超出總頁數)，
+        /// 供宿主表單強制校正頁碼，避免資料查詢越界。
         /// </summary>
         public void ForceCurrentPage(int page)
         {
