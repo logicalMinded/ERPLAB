@@ -1,56 +1,52 @@
 ﻿using ERPLAB.Models.Exceptions;
 using System.Data;
-
 namespace ERPLAB.UI.Core
 {
     /// <summary>
-    /// 系統業務分頁基底 (繼承自 UserControl)。
-    /// 核心職責：收斂所有子頁面共用的「RBAC 權限物理斷路」與「單據狀態機唯讀鎖定」邏輯。
+    /// 系統共用分頁基底類別 (繼承自 UserControl)。
+    /// 核心職責：將系統共用之 UI 邏輯進行抽象化收斂，包含：RBAC 權限之物理隱藏、
+    /// 單據狀態機之唯讀鎖定，以及非同步作業 (Async) 之例外攔截與訊息處理沙盒。
     /// </summary>
     public class BasePage : UserControl
     {
         public BasePage()
         {
-            // 💡 [效能最佳化] 開啟雙重緩衝 (Double Buffering)
-            // 解決 WinForms 在繪製包含大量控制項 (如 DataGridView) 的分頁時，畫面產生嚴重閃爍的物理缺陷。
+            // 開啟雙重緩衝 (Double Buffering) 機制。
+            // 解決 WinForms 於渲染包含大量子控制項 (如 DataGridView) 時產生之畫面閃爍問題。
             this.DoubleBuffered = true;
         }
 
         // =====================================================================
-        // 🛡️ [防禦引擎 A] RBAC 權限物理斷路 (Physical Circuit Breaker)
-        // 核心理念：絕不信任前端記憶體狀態。無權限的元件直接從渲染樹物理隱藏，
-        // 防範駭客利用記憶體修改工具 (如 Cheat Engine) 將 Enabled 屬性強行竄改為 true。
+        // 權限檢核防護機制 (RBAC Authorization)
+        // 採物理隱藏策略：不具權限之控制項將直接自畫面渲染樹中抹除或隱藏 (Visible = false)，
+        // 防範惡意使用者透過記憶體修改工具將 Enabled 屬性竄改以規避限制。
         // =====================================================================
 
         /// <summary>
-        /// 權限檢核多載 1：支援一般標準控制項 (Button, Panel, CheckBox 等)
+        /// 權限檢核多載一：適用於繼承自 Control 之標準控制項。
         /// </summary>
         protected void RequirePermission(string permissionCode, Control control)
         {
             if (control == null) return;
 
-            // O(1) 極速查核全域記憶體中的授權 Hash 表
+            // 透過 SessionContext 查詢快取之授權狀態，時間複雜度為 O(1)
             bool isAuthorized = SessionContext.HasPermission(permissionCode);
 
-            // 🚨 [特例攔截] 處理 WinForms 底層 SysTabControl32 的歷史包袱
-            // TabPage 雖然繼承自 Control，但設定 Visible = false 在畫面上完全無效。
+            // 特例處理：WinForms 之 TabPage 控制項設定 Visible 無效，必須實施物理卸載
             if (control is TabPage tabPage)
             {
                 if (!isAuthorized && tabPage.Parent is TabControl parentTabControl)
                 {
-                    // 必須採取物理抹除，將其從父容器的實體集合中強制卸載
                     parentTabControl.TabPages.Remove(tabPage);
                 }
                 return;
             }
 
-            // 常規控制項的物理隱藏
             control.Visible = isAuthorized;
         }
 
         /// <summary>
-        /// 權限檢核多載 2：支援選單與工具列 (ToolStripItem 架構)
-        /// 因 ToolStripButton 等元件在底層並不繼承自 Control，必須獨立開闢多載通道。
+        /// 權限檢核多載二：適用於選單與工具列項目 (非繼承自 Control 之 ToolStripItem 家族)。
         /// </summary>
         protected void RequirePermission(string permissionCode, ToolStripItem item)
         {
@@ -59,8 +55,8 @@ namespace ERPLAB.UI.Core
         }
 
         /// <summary>
-        /// 權限檢核多載 3：支援資料表行 (DataGridViewColumn)
-        /// 專門對付「進貨成本」或「高階主管核決數字」等機敏欄位的物理隱藏。
+        /// 權限檢核多載三：適用於資料表欄位 (DataGridViewColumn)。
+        /// 供隱藏機敏欄位 (如進貨成本、毛利率) 使用。
         /// </summary>
         protected void RequirePermission(string permissionCode, DataGridViewColumn column)
         {
@@ -69,39 +65,34 @@ namespace ERPLAB.UI.Core
         }
 
         // =====================================================================
-        // 🛡️ [防禦引擎 B] 單據狀態機唯讀鎖定 (State Machine UI Locking)
-        // 核心理念：當單據進入不可逆狀態 (如 Status = 2 已過帳)，前端必須即時物理鎖死，
-        // 防止使用者修改資料後送出，導致後端 DAL 拋出例外，降低伺服器無謂的 I/O 與運算負擔。
+        // 單據狀態機防護機制 (State Machine UI Locking)
+        // 於單據過帳或作廢等不可逆狀態下，對 UI 實施全域唯讀鎖定，
+        // 阻絕無效更新操作，減少後端資料庫層無謂的驗證與 I/O 成本。
         // =====================================================================
 
         /// <summary>
-        /// 檢查單據目前狀態，若符合鎖定條件，則發動全表單遞迴鎖死機制
+        /// 檢核單據狀態，若觸發鎖定條件，則發動遞迴鎖死控制項結構。
         /// </summary>
-        /// <param name="currentStatus">單據目前的真實狀態碼</param>
-        /// <param name="lockedStatus">觸發鎖定的門檻狀態碼 (如：2)</param>
         protected void LockUIForStatus(byte currentStatus, byte lockedStatus)
         {
             if (currentStatus != lockedStatus) return;
 
-            // 啟動遞迴遍歷
             RecursiveLockControls(this.Controls);
         }
 
         /// <summary>
-        /// 深度優先搜尋 (DFS) 遞迴鎖定控制項樹狀結構
+        /// 透過深度優先搜尋 (DFS) 遞迴鎖定控制項及其子元件。
         /// </summary>
         private void RecursiveLockControls(Control.ControlCollection controls)
         {
             foreach (Control ctrl in controls)
             {
-                // 若為容器元件 (如 Panel, GroupBox)，必須往下遞迴鑽入
                 if (ctrl.HasChildren)
                 {
                     RecursiveLockControls(ctrl.Controls);
                 }
 
-                // 💡 依據控制項物理特性實施最佳鎖定策略
-                // 優先使用 ReadOnly (可反白複製內容但不准改)，若無該屬性才退而求其次使用 Enabled = false
+                // 依據控制項特性實施降級鎖定策略 (優先採用 ReadOnly 保留內容複製能力，次之為 Enabled)
                 switch (ctrl)
                 {
                     case TextBox txt:
@@ -121,7 +112,7 @@ namespace ERPLAB.UI.Core
                         break;
 
                     case Button btn:
-                        // 彈性豁免機制：若按鈕的 Tag 屬性標示為 "IgnoreLock" (例如：離開視窗、列印報表按鈕)，則不予鎖死
+                        // 豁免機制：供關閉視窗、列印報表等非資料寫入型按鈕排除鎖定
                         if (btn.Tag?.ToString() != "IgnoreLock")
                         {
                             btn.Enabled = false;
@@ -129,7 +120,6 @@ namespace ERPLAB.UI.Core
                         break;
 
                     case DataGridView dgv:
-                        // 徹底封殺 DataGridView 的所有寫入途徑
                         dgv.ReadOnly = true;
                         dgv.AllowUserToAddRows = false;
                         dgv.AllowUserToDeleteRows = false;
@@ -138,15 +128,18 @@ namespace ERPLAB.UI.Core
             }
         }
 
+        // =====================================================================
+        // 驗證輔助工具 (Validation Helper)
+        // 封裝通用之資料驗證回饋流程。
+        // =====================================================================
+
         /// <summary>
-        /// 💡 配合 SystemValidator Tuple 的神級防衛方法
+        /// 處理 Tuple 格式之驗證結果，並自動處理錯誤提示與游標焦點轉移。
         /// </summary>
         protected bool EnsureValid((bool IsValid, string ErrorMsg) validationResult, Control focusControl = null)
         {
-            // 如果驗證通過，安全放行
             if (validationResult.IsValid) return true;
 
-            // 驗證失敗，由 UI 專屬的 BasePage 負責彈出 MessageBox 與搶焦點！
             MessageBox.Show(validationResult.ErrorMsg, "驗證失敗", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             focusControl?.Focus();
 
@@ -154,22 +147,26 @@ namespace ERPLAB.UI.Core
         }
 
         // =====================================================================
-        // 🛡️ [UI 交易安全沙盒] (三層式架構純淨版)
-        // 核心職責：只負責攔截「商業邏輯異常」與「樂觀鎖」，徹底與 SQL 脫鉤！
-        // 透過委派 (Func) 達成控制反轉 (IoC)，大幅淨化子表單程式碼。
+        // UI 層例外攔截沙盒 (Exception Handling Sandbox)
+        // 核心職責：將商業邏輯層 (BLL) 封裝為委派 (Delegate) 執行，
+        // 統一捕捉樂觀鎖異常 (DBConcurrencyException) 與業務邏輯異常 (BusinessRuleException)，
+        // 保持子表單程式碼純淨，並確保系統穩定性。
         // =====================================================================
+
+        /// <summary>
+        /// 提供非同步作業之安全執行沙盒。
+        /// </summary>
+        /// <param name="bllAction">待執行之商業邏輯作業</param>
+        /// <param name="reloadDataAction">選填，發生樂觀鎖衝突時自動執行之資料重載作業</param>
         protected async Task<bool> SafeExecuteAsync(Func<Task> bllAction, Func<Task>? reloadDataAction = null)
         {
             try
             {
-                // 執行外部傳進來的 BLL 商業邏輯操作
                 await bllAction();
-
                 return true;
             }
             catch (DBConcurrencyException cx)
             {
-                // 💡 樂觀鎖衝突攔截：提示使用者，並自動發動子表單傳入的重載資料邏輯
                 MessageBox.Show(cx.Message, "資料衝突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
                 if (reloadDataAction != null)
@@ -181,17 +178,12 @@ namespace ERPLAB.UI.Core
             }
             catch (BusinessRuleException brex)
             {
-                // 💡 商業邏輯攔截：接住 BLL 翻譯好的客製化業務錯誤
-                // 只顯示 BLL 給的字串，達成與 SQL Server 的徹底解耦
                 MessageBox.Show(brex.Message, "業務檢核失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
                 return false;
             }
             catch (Exception ex)
             {
-                // 🚨 系統崩潰防禦：攔截所有未預期異常 (如網路斷線、BLL 內部未處理的 Exception)
-                MessageBox.Show($"發生未預期的系統錯誤：\n{ex.Message}", "系統崩潰防禦", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
+                MessageBox.Show($"發生未預期的系統錯誤：\n{ex.Message}", "系統異常", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
             }
         }
