@@ -4,12 +4,12 @@ using ERPLAB.Models.Constants;
 using ERPLAB.Models.Entities;
 using ERPLAB.Models.Exceptions;
 using Microsoft.Data.SqlClient;
-
 namespace ERPLAB.BLL.Services
 {
     /// <summary>
-    /// 廠商基本檔商業邏輯服務 (BLL 大腦)。
-    /// 核心職責：隔離 UI 與 DAL，集中處理取號邏輯與狀態機分流。
+    /// 廠商基本檔商業邏輯服務 (BLL)
+    /// 負責處理廠商資料的建立、更新、狀態切換及單號配發，
+    /// 並將底層資料存取異常轉譯為前端可識別的商業規則例外 (BusinessRuleException)。
     /// </summary>
     public class VendorService
     {
@@ -21,7 +21,7 @@ namespace ERPLAB.BLL.Services
         }
 
         // =====================================================================
-        // 🔍 讀取服務 (純粹的代理呼叫)
+        // 資料讀取服務 (Query)
         // =====================================================================
         public async Task<(List<Vendor> Items, int TotalCount)> GetVendorsAsync(int pageNumber, int pageSize, bool includeInactive = false, string keyword = "")
         {
@@ -29,7 +29,7 @@ namespace ERPLAB.BLL.Services
         }
 
         // =====================================================================
-        // ➕ 核心交易：新增廠商
+        // 交易服務：新增廠商 (Command)
         // =====================================================================
         public async Task<Vendor> CreateVendorAsync(Vendor vendor, int accountId)
         {
@@ -38,7 +38,7 @@ namespace ERPLAB.BLL.Services
             vendor.UpdateUser = accountId;
             try
             {
-                // 呼叫底層微交易取號引擎
+                // 呼叫共用服務配發業務流水號
                 vendor.VendorNo = await AutoNumberHelper.GetNextSequenceAsync(AutoNumberPrefixes.Vendor);
 
                 return await _repo.CreateAsync(vendor);
@@ -50,7 +50,7 @@ namespace ERPLAB.BLL.Services
         }
 
         // =====================================================================
-        // 📝 核心交易：更新廠商資料
+        // 交易服務：更新廠商資料 (Command)
         // =====================================================================
         public async Task<byte[]> UpdateVendorAsync(Vendor vendor, int accountId)
         {
@@ -66,7 +66,7 @@ namespace ERPLAB.BLL.Services
         }
 
         // =====================================================================
-        // 🔄 核心交易：變更廠商狀態 (停用/復權)
+        // 狀態機服務：變更廠商狀態 (停用/啟用)
         // =====================================================================
         public async Task<byte[]> UpdateVendorStatusAsync(int vendorId, bool currentStatus, byte[] rowVersion, int updateUser)
         {
@@ -80,15 +80,16 @@ namespace ERPLAB.BLL.Services
                 throw TranslateSqlException(sqlex);
             }
         }
+
         // =====================================================================
-        // 🛡️ [例外轉譯器] 將骯髒的 SQL 代碼化為純潔的商業語言
+        // 輔助方法：SQL 例外轉譯 (Exception Translation)
         // =====================================================================
         private BusinessRuleException TranslateSqlException(SqlException sqlex)
         {
             string friendlyMsg = $"資料庫寫入異常(代碼：{sqlex.Number})，請聯絡系統管理員進行查修。";
             if (sqlex.Number == 2627 || sqlex.Number == 2601)
             {
-                // 💡 精確對應 Vendor 的業務情境
+                // 攔截 Unique Constraint 衝突，對應廠商基本檔的業務限制
                 friendlyMsg = "系統拒絕存檔：廠商編號、電話或統一編號不可與現有資料重複！";
             }
             else if (sqlex.Number == 547)
@@ -96,14 +97,16 @@ namespace ERPLAB.BLL.Services
                 if (sqlex.Message.Contains("CK_Vendor_CustomZipCode_Length") || sqlex.Message.Contains("CK_Vendor_CustomZipCode_Numeric")
                     || sqlex.Message.Contains("CK_Vendor_Email_NullableCheck") || sqlex.Message.Contains("CK_Vendor_PhoneNumber_StrictSymbols")
                     || sqlex.Message.Contains("CK_Vendor_TaxID_Numeric"))
-                { friendlyMsg = "系統拒絕存檔：資料格式違反底層限制 (統一編號、電子信箱、電話或郵遞區號格式不符)！"; }
+                {
+                    friendlyMsg = "系統拒絕存檔：資料格式違反底層限制 (統一編號、電子信箱、電話或郵遞區號格式不符)！";
+                }
                 else
                 {
                     friendlyMsg = "系統拒絕存檔：資料格式違反底層限制！";
                 }
             }
 
-            // 其他 SQL 異常也包裝起來，避免底層 StackTrace 直接暴露給 UI
+            // 將其他 SQL 異常封裝為商業邏輯例外，避免底層 StackTrace 暴露至前端
             return new BusinessRuleException(friendlyMsg);
         }
     }

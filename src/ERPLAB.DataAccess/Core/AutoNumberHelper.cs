@@ -1,21 +1,21 @@
 ﻿using Microsoft.Data.SqlClient;
-
 namespace ERPLAB.DataAccess.Core
 {
     /// <summary>
-    /// 全域自動編碼取號引擎。
-    /// 核心職責：提供高併發下的極速原子級 (Atomic) 取號，物理隔離於各業務單據的龐大交易之外。
+    /// 自動編碼產生器 (AutoNumberHelper)
+    /// 負責處理單據流水號的原子性 (Atomic) 取號作業，
+    /// 透過獨立連線避免與主業務交易產生鎖定爭用 (Lock Contention)。
     /// </summary>
     public static class AutoNumberHelper
     {
         /// <summary>
-        /// 取得下一個單據編號 (如: SO202607130001)
+        /// 取得下一個單據編號 (例如: SO202607130001)
         /// </summary>
-        /// <param name="docType">單據類型代碼 (如: SO, PO, INV)</param>
+        /// <param name="docType">單據類型代碼 (例如: SO, PO, INV)</param>
         public static async Task<string> GetNextSequenceAsync(string docType)
         {
-            // 💡 物理隔離：自己開一條獨立連線。
-            // 執行完 UPDATE 瞬間釋放，絕對不跟後續 Master-Detail 的長時間寫入搶資源。
+            // 建立獨立資料庫連線：使取號操作與主業務交易分離，
+            // 確保 UPDATE 執行後立即釋放資源，降低資料表鎖定 (Locking) 的影響。
             using var conn = await DbConnectionFactory.GetConnectionAsync();
 
             string sql = @"
@@ -42,7 +42,7 @@ namespace ERPLAB.DataAccess.Core
                 int nextSeq = reader.GetInt32(seqIndex);
                 DateTime dbDate = reader.GetDateTime(dateIndex);
 
-                // 💡 共用字串組裝邏輯：動態組合傳入的 DocType + 系統日期 + 4碼流水號
+                // 組合單據編號格式：單據字首 (DocType) + 資料庫當前日期 (yyyyMMdd) + 4碼流水號
                 return $"{docType}{dbDate:yyyyMMdd}{nextSeq:D4}";
             }
 
