@@ -7,14 +7,20 @@ using System.Data;
 namespace ERPLAB.DataAccess.Repositories
 {
     /// <summary>
-    /// 員工基本檔倉儲。
-    /// 核心防線：精確映射人事狀態與性別 Enum、完整支援 3+3 郵遞區號擴充，以及身份鑑識雙重 LEFT JOIN。
+    /// 員工資料存取層 (Repository)
+    /// 負責處理 Employee 實體的資料庫 I/O 操作，包含多重結果集分頁查詢、
+    /// 實體狀態與 Enum 的強型別對應，以及樂觀鎖 (Optimistic Concurrency) 併發控制。
     /// </summary>
     public class EmployeeRepository
     {
         // =====================================================================
-        // 🔍 [檢索引擎] 支援動態過濾停用資料、多欄位模糊搜尋與極速分頁
+        // 資料讀取服務 (Query)
         // =====================================================================
+
+        /// <summary>
+        /// 取得員工清單 (分頁查詢)
+        /// 採用單次 Batch 執行多段 SQL，同步取得總筆數與分頁明細以最佳化 I/O 效能。
+        /// </summary>
         public async Task<(List<Employee> Items, int TotalCount)> GetEmployeesAsync(int pageNumber, int pageSize, bool includeInactive = false, string keyword = "")
         {
             var list = new List<Employee>();
@@ -25,7 +31,7 @@ namespace ERPLAB.DataAccess.Repositories
             using var cmd = new SqlCommand();
             cmd.Connection = conn;
 
-            // 💡 效能亮點：MARS (多重結果集) 查詢
+            // 將總筆數計算與分頁實體查詢合併為單一批次 (Batch) 執行，減少資料庫往返 (Round-trip) 成本
             var sqlBuilder = new System.Text.StringBuilder(@"
                 -- 語句 1：計算符合條件的總筆數
                 SELECT COUNT(1) 
@@ -38,7 +44,7 @@ namespace ERPLAB.DataAccess.Repositories
                     e.[EmployeeNo] LIKE @Keyword OR 
                     e.[EmployeeName] LIKE @Keyword OR 
                     e.[PhoneNumber] LIKE @Keyword OR 
-                    e.[Email] LIKE @Keyword) "); // 💡 擴充 Email 搜尋
+                    e.[Email] LIKE @Keyword) ");
             }
 
             sqlBuilder.Append(@"
@@ -51,7 +57,7 @@ namespace ERPLAB.DataAccess.Repositories
                     e.[CreateTime], e.[CreateUser], e.[UpdateTime], e.[UpdateUser], 
                     e.[IsActive], e.[RowVersion],
                     
-                    -- 💡 [身分鑑識引擎] 透過 Accounts 表橋接，還原建檔與修改者的工號
+                    -- 透過 Accounts 關聯至 Employee 主檔，取得建檔者與異動者的實際工號 (EmployeeNo)
                     empCreate.[EmployeeNo] AS CreateUserNo_Display,
                     empUpdate.[EmployeeNo] AS UpdateUserNo_Display
 
@@ -71,44 +77,48 @@ namespace ERPLAB.DataAccess.Repositories
                     e.[PhoneNumber] LIKE @Keyword OR 
                     e.[Email] LIKE @Keyword) ");
 
-                // 參數化模糊搜尋
+                // SQL 參數於同一個 Command 批次中可跨 SELECT 語句重複綁定
                 cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Keyword", $"%{keyword.Trim()}%", 50));
             }
 
             cmd.Parameters.Add(SqlParameterFactory.CreateBit("@IncludeInactive", includeInactive));
 
-            // 預設採用 ID 遞減排序 (最新到職的排在最前)
+            // 預設採用 ID 遞減排序 (確保最新到職的資料優先呈現)
             sqlBuilder.Append(" ORDER BY e.[EmployeeID] DESC ");
 
             // =====================================================================
-            // 💡 [分頁引擎開關與絕對邊界防禦] 
+            // 分頁邏輯與參數邊界驗證
             // =====================================================================
             if (pageSize > 0)
             {
+                // 標準 OFFSET-FETCH 分頁模式
                 sqlBuilder.Append(" OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;");
                 cmd.Parameters.Add(SqlParameterFactory.CreateInt("@Offset", offset));
                 cmd.Parameters.Add(SqlParameterFactory.CreateInt("@PageSize", pageSize));
             }
             else if (pageSize == 0)
             {
+                // 特殊情境：關閉分頁進行全資料撈取 (如匯出 Excel 報表)
                 sqlBuilder.Append(";");
             }
             else
             {
+                // Fail-Fast 機制：阻擋無效的負數分頁參數
                 throw new ArgumentOutOfRangeException(nameof(pageSize), "分頁筆數 (pageSize) 必須大於或等於 0！");
             }
 
             cmd.CommandText = sqlBuilder.ToString();
 
+            // 處理雙重結果集 (Multiple Result Sets)
             using var reader = await cmd.ExecuteReaderAsync();
 
-            // 讀取總筆數
+            // 讀取第一段結果：符合條件之總筆數
             if (await reader.ReadAsync())
             {
                 totalCount = reader.GetInt32(0);
             }
 
-            // 讀取分頁資料
+            // 推進至第二段結果：分頁實體資料
             if (await reader.NextResultAsync())
             {
                 while (await reader.ReadAsync())
@@ -119,14 +129,12 @@ namespace ERPLAB.DataAccess.Repositories
                         EmployeeNo = reader.GetString(reader.GetOrdinal("EmployeeNo")),
                         EmployeeName = reader.GetString(reader.GetOrdinal("EmployeeName")),
 
-                        // 💡 雙重強型別 Enum 轉換 (Downcasting)
                         JobStatus = (EmployeeJobStatus)reader.GetByte(reader.GetOrdinal("JobStatus")),
                         Gender = (GenderType)reader.GetByte(reader.GetOrdinal("Gender")),
 
                         JobTitle = reader.GetString(reader.GetOrdinal("JobTitle")),
                         PhoneNumber = reader.GetString(reader.GetOrdinal("PhoneNumber")),
 
-                        // 💡 擴充的地理與聯絡欄位映射
                         DistrictID = reader.GetInt32(reader.GetOrdinal("DistrictID")),
                         CustomZipCode = reader.GetString(reader.GetOrdinal("CustomZipCode")),
                         Address = reader.GetString(reader.GetOrdinal("Address")),
@@ -150,8 +158,13 @@ namespace ERPLAB.DataAccess.Repositories
         }
 
         // =====================================================================
-        // ➕ [寫入引擎] 
+        // 資料交易服務 (Command)
         // =====================================================================
+
+        /// <summary>
+        /// 新增員工資料。
+        /// 透過 OUTPUT 子句同步取回資料庫生成的 ID 與 Timestamp (RowVersion)。
+        /// </summary>
         public async Task<Employee> CreateAsync(Employee entity)
         {
             string sql = @"
@@ -171,7 +184,6 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@EmployeeNo", entity.EmployeeNo, 20));
             cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@EmployeeName", entity.EmployeeName, 50));
 
-            // 💡 Enum 轉回位元組 (Upcasting to Value Type)
             cmd.Parameters.Add(SqlParameterFactory.CreateTinyInt("@JobStatus", (byte)entity.JobStatus));
             cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@JobTitle", entity.JobTitle, 50));
             cmd.Parameters.Add(SqlParameterFactory.CreateTinyInt("@Gender", (byte)entity.Gender));
@@ -195,13 +207,14 @@ namespace ERPLAB.DataAccess.Repositories
             return entity;
         }
 
-        // =====================================================================
-        // 📝 [更新引擎] 樂觀鎖防禦
-        // =====================================================================
+        /// <summary>
+        /// 更新員工資料。
+        /// 實作樂觀鎖防禦機制，若資料於讀取後遭他人異動，將拋出 DBConcurrencyException。
+        /// </summary>
         public async Task<byte[]> UpdateAsync(Employee entity)
         {
-            // 💡 [架構師提醒] EmployeeNo 屬於業務主鍵，建檔後不允許修改
-            // 若修改 JobStatus 為離職，SQL Trigger 會自動連動砍掉此人的帳號 IsActive 權限
+            // 業務規則：員工編號 (EmployeeNo) 為業務主鍵，建檔後不允許修改，故排除於 UPDATE 語句外。
+            // 系統連動：若 JobStatus 變更為離職，資料庫 Trigger 會自動連動停用其關聯之登入帳號 (IsActive = 0)。
             string sql = @"
                 UPDATE [dbo].[Employee] 
                 SET [EmployeeName] = @EmployeeName,
@@ -228,7 +241,6 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateTinyInt("@Gender", (byte)entity.Gender));
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@PhoneNumber", entity.PhoneNumber, 20));
 
-            // 💡 補齊擴充的地理與聯絡欄位參數
             cmd.Parameters.Add(SqlParameterFactory.CreateInt("@DistrictID", entity.DistrictID));
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@CustomZipCode", entity.CustomZipCode, 6));
             cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Address", entity.Address, 200));
@@ -242,6 +254,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             var result = await cmd.ExecuteScalarAsync();
 
+            // 若回傳值為 null，代表受影響筆數為 0，表示資料已被刪除或發生樂觀鎖衝突
             if (result == null)
             {
                 throw new DBConcurrencyException("此員工資料已被其他使用者異動，請重新載入最新資料後再試。");

@@ -7,14 +7,21 @@ using System.Data;
 namespace ERPLAB.DataAccess.Repositories
 {
     /// <summary>
-    /// 銷貨單倉儲 (Master-Detail 架構)。
-    /// 核心防線：微交易取號、TVP 批次寫入、分散式交易控制 (SqlTransaction)、反正規化零信任計算、狀態機物理鎖定。
+    /// 銷貨單資料存取層 (Repository)。
+    /// 負責處理 Sales 實體 (Master-Detail 架構) 的資料庫 I/O 操作。
+    /// 核心實作包含 TVP 批次寫入、樂觀鎖併發控制 (Optimistic Concurrency)，
+    /// 以及銷貨過帳/作廢時連動商品庫存增減與移動平均成本 (Moving Average Cost) 之還原運算。
     /// </summary>
     public class SalesRepository
     {
         // =====================================================================
-        // 🔍 [檢索引擎] 支援分頁 (Pagination) 與 JOIN 輔助欄位 (身分鑑識)
+        // 資料讀取服務 (Query)
         // =====================================================================
+
+        /// <summary>
+        /// 取得銷貨單清單 (分頁查詢)。
+        /// 採用單次 Batch 執行多段 SQL，同步取得總筆數與分頁明細以最佳化 I/O 效能。
+        /// </summary>
         public async Task<(List<SalesMaster> Items, int TotalCount)> GetSalesOrdersAsync(int pageNumber, int pageSize, string keyword = "", bool showVoided = false)
         {
             var list = new List<SalesMaster>();
@@ -25,7 +32,7 @@ namespace ERPLAB.DataAccess.Repositories
             using var cmd = new SqlCommand();
             cmd.Connection = conn;
 
-            // 💡 MARS 多重結果集：同時要回總筆數與分頁明細
+            // 將總筆數計算與分頁查詢合併為單一批次 (Batch) 執行，減少網路往返 (Round-trip)
             var sqlBuilder = new System.Text.StringBuilder(@"
                 -- 語句 1：計算總筆數
                 SELECT COUNT(1) 
@@ -40,7 +47,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             sqlBuilder.Append(@"
                 ;
-                -- 語句 2：分頁撈取主檔實體，並 JOIN 帶出廠商與審計資訊
+                -- 語句 2：分頁撈取主檔實體，並關聯客戶與審計人員資訊
                 SELECT 
                     sm.[SalesID], sm.[SalesNo], sm.[SalesDate], sm.[ShipDistrictID], sm.[ShipZipCode], sm.[ShipAddress], 
                     sm.[CustomerID], sm.[TotalAmount], sm.[Remark], sm.[Status],
@@ -49,7 +56,6 @@ namespace ERPLAB.DataAccess.Repositories
                     c.[CustomerNo] AS CustomerNo_Display, 
                     c.[CustomerName] AS CustomerName_Display,
 
-                    -- 💡 跨表身分鑑識
                     empCreate.[EmployeeNo] AS CreateUserNo_Display,
                     empUpdate.[EmployeeNo] AS UpdateUserNo_Display
 
@@ -67,8 +73,10 @@ namespace ERPLAB.DataAccess.Repositories
                 cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Keyword", $"%{keyword.Trim()}%", 50));
             }
 
+            // 預設依單據 ID 遞減排序 (最新建立者優先)
             sqlBuilder.Append(" ORDER BY sm.[SalesID] DESC ");
 
+            // 分頁邊界防禦與參數處理
             if (pageSize > 0)
             {
                 sqlBuilder.Append(" OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;");
@@ -81,6 +89,7 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateBit("@ShowVoided", showVoided));
             cmd.CommandText = sqlBuilder.ToString();
 
+            // 處理雙重結果集 (Multiple Result Sets)
             using var reader = await cmd.ExecuteReaderAsync();
 
             if (await reader.ReadAsync()) totalCount = reader.GetInt32(0);
@@ -120,13 +129,12 @@ namespace ERPLAB.DataAccess.Repositories
         }
 
         /// <summary>
-        /// 取得單張銷貨單的所有明細
+        /// 取得指定銷貨單之明細資料，並關聯商品主檔取得顯示名稱。
         /// </summary>
         public async Task<List<SalesDetail>> GetSalesDetailsAsync(long salesId)
         {
             var list = new List<SalesDetail>();
 
-            // 💡 JOIN 商品基本檔以取得代碼與品名，供 UI 顯示使用
             string sql = @"
                 SELECT 
                     sd.[SalesDID], sd.[SalesID], sd.[LineNo], sd.[ProductID], 
@@ -163,18 +171,22 @@ namespace ERPLAB.DataAccess.Repositories
         }
 
         // =====================================================================
-        // ➕ [交易引擎] 建立新單據 (Master-Detail TVP 寫入)
+        // 資料交易服務 (Command)
         // =====================================================================
+
+        /// <summary>
+        /// 建立銷貨草稿單據。
+        /// 使用 SqlTransaction 確保主檔與明細檔寫入之原子性 (Atomicity)，明細部分透過 TVP 進行批次寫入。
+        /// </summary>
         public async Task<SalesMaster> CreateSalesOrderAsync(SalesMaster master, List<SalesDetail> details)
         {
             details ??= new List<SalesDetail>();
 
             using var conn = await DbConnectionFactory.GetConnectionAsync();
-            // 💡 開啟分散式交易
             using var tx = conn.BeginTransaction();
             try
             {
-                // 💡 寫入主檔，並利用 OUTPUT 瞬間取回資料庫配發的 BIGINT 主鍵與樂觀鎖
+                // 寫入主檔，並利用 OUTPUT 同步取回資料庫配發的主鍵 (SalesID) 與 Timestamp (RowVersion)
                 string masterSql = @"
                     INSERT INTO [dbo].[SalesMaster] 
                     ([SalesNo], [SalesDate], [ShipDistrictID], [ShipZipCode], [ShipAddress], [CustomerID], 
@@ -193,8 +205,6 @@ namespace ERPLAB.DataAccess.Repositories
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateInt("@CustomerID", master.CustomerID));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateDecimal("@TotalAmount", master.TotalAmount));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Remark", master.Remark, 500));
-
-                // 新增單據必定為草稿 (未過帳)
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateTinyInt("@Status", (byte)DocumentStatus.Draft));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateInt("@CreateUser", master.CreateUser));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateInt("@UpdateUser", master.UpdateUser));
@@ -208,7 +218,7 @@ namespace ERPLAB.DataAccess.Repositories
                     }
                 }
 
-                // 💡 TVP 批次寫入明細 (1 次 I/O 寫入全表明細)
+                // 將明細集合轉換為 TVP 格式批次寫入
                 if (details != null && details.Count > 0)
                 {
                     string detailSql = @"
@@ -218,8 +228,6 @@ namespace ERPLAB.DataAccess.Repositories
 
                     using var cmdDetail = new SqlCommand(detailSql, conn, tx);
                     cmdDetail.Parameters.Add(new SqlParameter("@SalesID", SqlDbType.BigInt) { Value = master.SalesID });
-
-                    // 💡 將 List 轉為 DataTable 並指定為 Structured (結構化) 參數
                     cmdDetail.Parameters.Add(new SqlParameter("@DetailsTvp", SqlDbType.Structured)
                     {
                         TypeName = "dbo.SalesDetailType",
@@ -229,19 +237,20 @@ namespace ERPLAB.DataAccess.Repositories
                     await cmdDetail.ExecuteNonQueryAsync();
                 }
 
-                tx.Commit(); // 物理提交，寫入硬碟
+                tx.Commit();
                 return master;
             }
             catch
             {
-                tx.Rollback(); // 遭遇任何錯誤 (包含約束違反)，全數退回
+                tx.Rollback();
                 throw;
             }
         }
 
-        // =====================================================================
-        // 📝 [更新引擎] 樂觀鎖防禦 + 明細砍掉重練 (The Purge & Replace Pattern)
-        // =====================================================================
+        /// <summary>
+        /// 更新銷貨草稿單據。
+        /// 結合 RowVersion 與 DraftStatus 檢核樂觀鎖。明細檔採先刪後增 (Delete-then-Insert) 模式配合 TVP 寫入。
+        /// </summary>
         public async Task<byte[]> UpdateSalesOrderDraftAsync(SalesMaster master, List<SalesDetail> details)
         {
             using var conn = await DbConnectionFactory.GetConnectionAsync();
@@ -249,8 +258,6 @@ namespace ERPLAB.DataAccess.Repositories
 
             try
             {
-                // 1. 更新主檔 (掛載樂觀鎖與狀態防呆)
-                // 🚨 物理阻斷：狀態必須為 Draft(1) 才允許修改草稿！若為其他狀態直接引發 0 筆更新例外
                 string masterSql = @"
                     UPDATE [dbo].[SalesMaster] 
                     SET [SalesDate] = @SalesDate,
@@ -280,19 +287,20 @@ namespace ERPLAB.DataAccess.Repositories
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateTimestamp("@RowVersion", master.RowVersion));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateTinyInt("@DraftStatus", (byte)DocumentStatus.Draft));
 
+                // 樂觀鎖驗證：確認單據狀態為草稿且 Timestamp 吻合
                 var result = await cmdMaster.ExecuteScalarAsync();
                 if (result == null)
                 {
                     throw new DBConcurrencyException("此單據已被異動，或已改變狀態 (如：已審核過帳)，無法修改草稿！請重新載入資料。");
                 }
 
-                // 2. 🧹 物理抹除舊明細 (免除狀態追蹤地獄)
+                // 物理抹除舊有明細資料
                 string deleteSql = "DELETE FROM [dbo].[SalesDetail] WHERE [SalesID] = @SalesID;";
                 using var cmdDelete = new SqlCommand(deleteSql, conn, tx);
                 cmdDelete.Parameters.Add(new SqlParameter("@SalesID", SqlDbType.BigInt) { Value = master.SalesID });
                 await cmdDelete.ExecuteNonQueryAsync();
 
-                // 3. 🚀 TVP 重新寫入新明細 (與 Create 邏輯相同)
+                // 批次寫入新明細
                 if (details != null && details.Count > 0)
                 {
                     string detailSql = @"
@@ -312,7 +320,7 @@ namespace ERPLAB.DataAccess.Repositories
                 }
 
                 tx.Commit();
-                return (byte[])result; // 回傳最新的時間戳記供 UI 同步
+                return (byte[])result;
             }
             catch
             {
@@ -321,20 +329,19 @@ namespace ERPLAB.DataAccess.Repositories
             }
         }
 
-        // =====================================================================
-        // 🔄 [狀態機推進引擎] 單向變更狀態 (如：審核過帳、註銷、作廢)
-        // 業界實務：修改狀態時，絕對不允許同時修改單據內容，確保內控獨立性。
-        // =====================================================================
+        /// <summary>
+        /// 銷貨單狀態推進 (過帳或作廢)。
+        /// 狀態變更與實體庫存異動必須在同一 Transaction 內完成，確保業務邏輯之 ACID 特性。
+        /// 過帳時將執行庫存扣減，並將商品當下之移動平均成本寫入銷貨明細做為快照；作廢時則將商品庫存加回。
+        /// </summary>
         public async Task<byte[]> UpdateOrderStatusAsync(long salesId, byte expectedCurrentStatus, byte targetStatus, byte[] rowVersion, int updateUser)
         {
             using var conn = await DbConnectionFactory.GetConnectionAsync();
-
-            // 💡 物理防線：狀態切換與庫存異動必須「同生共死」
             using var tx = conn.BeginTransaction();
 
             try
             {
-                // 1. 執行狀態機單向推進與樂觀鎖防禦
+                // 1. 更新主檔狀態與樂觀鎖防禦
                 string statusSql = @"
                     UPDATE [dbo].[SalesMaster]
                     SET [Status] = @TargetStatus,
@@ -360,14 +367,13 @@ namespace ERPLAB.DataAccess.Repositories
                 }
 
                 // =====================================================================
-                // 📦 2. [物理庫存連動引擎] 依據狀態決定「扣庫存」或「加庫存」
+                // 2. 庫存與移動平均成本 (Moving Average Cost) 運算引擎
                 // =====================================================================
                 string stockUpdateSql = string.Empty;
 
-                // 狀態 1 -> 2 (審核過帳)：扣除庫存 (使用 - 號)，寫入成本快照
                 if (targetStatus == (byte)DocumentStatus.Posted)
                 {
-                    // 過帳瞬間，強制將 Product 當下成本快照寫死進 SalesDetail
+                    // 過帳瞬間，將 Product 當下成本寫入 SalesDetail 作為歷史快照
                     string snapshotSql = @"
                         UPDATE sd
                         SET sd.[UnitCost] = p.[MovingAverageCost]
@@ -379,7 +385,7 @@ namespace ERPLAB.DataAccess.Repositories
                     cmdSnapshot.Parameters.Add(new SqlParameter("@SalesID", SqlDbType.BigInt) { Value = salesId });
                     await cmdSnapshot.ExecuteNonQueryAsync();
 
-                    // 💡 聚合更新防線：必須先 SUM(Qty)，防範同一張單據內輸入重複商品導致漏扣！
+                    // 扣除庫存 (銷貨出庫)
                     stockUpdateSql = @"
                         UPDATE p
                         SET p.[CurrentStock] = p.[CurrentStock] - agg.[TotalQty],
@@ -393,9 +399,9 @@ namespace ERPLAB.DataAccess.Repositories
                             GROUP BY [ProductID]
                         ) agg ON p.[ProductID] = agg.[ProductID];";
                 }
-                // 狀態 2 -> 4 (作廢沖銷)：加回庫存 (使用 + 號)
                 else if (targetStatus == (byte)DocumentStatus.Voided)
                 {
+                    // 作廢：加回庫存並透過明細中的 UnitCost 快照反推還原移動平均成本
                     stockUpdateSql = @"
                         UPDATE p
                         SET 
@@ -409,7 +415,6 @@ namespace ERPLAB.DataAccess.Repositories
                             p.[UpdateUser] = @UpdateUser
                         FROM [dbo].[Product] p
                         INNER JOIN (
-                            -- 提取快照成本參與重算
                             SELECT [ProductID], SUM([Qty]) AS TotalQty, SUM([Qty] * [UnitCost]) AS TotalCostSnapshot
                             FROM [dbo].[SalesDetail]
                             WHERE [SalesID] = @SalesID
@@ -424,11 +429,11 @@ namespace ERPLAB.DataAccess.Repositories
                     cmdStock.Parameters.Add(new SqlParameter("@SalesID", SqlDbType.BigInt) { Value = salesId });
                     cmdStock.Parameters.Add(SqlParameterFactory.CreateInt("@UpdateUser", updateUser));
 
-                    // 🚨 這裡可能會觸發 CK_Product_CurrentStock (庫存不可為負數) 的 Error 547！
+                    // 若過帳扣減時庫存不足，將觸發底層 CK_Product_CurrentStock 拋出 Error 547 例外並中斷交易
                     await cmdStock.ExecuteNonQueryAsync();
                 }
 
-                tx.Commit(); // 狀態與庫存異動雙雙落地
+                tx.Commit();
                 return (byte[])result;
             }
             catch

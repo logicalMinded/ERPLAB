@@ -6,12 +6,21 @@ using System.Data;
 
 namespace ERPLAB.DataAccess.Repositories
 {
+    /// <summary>
+    /// 庫存盤點資料存取層 (Repository)
+    /// 負責處理 Inventory 實體的資料庫 I/O 操作，包含分頁查詢、TVP 批次寫入、
+    /// 樂觀鎖 (Optimistic Concurrency) 併發控制，以及盤點過帳時的核心邏輯：差異沖平算法 (Delta Adjustment Pattern)。
+    /// </summary>
     public class InventoryRepository
     {
         // =====================================================================
-        // 🔍 [檢索引擎] 
-        // 物理特性：無 IsActive，全表撈取 (可額外傳入狀態過濾)
+        // 資料讀取服務 (Query)
         // =====================================================================
+
+        /// <summary>
+        /// 取得盤點單清單 (分頁查詢)。
+        /// 盤點單屬於交易單據，無實體刪除標記 (IsActive)，採單次 Batch 執行多段 SQL 同步取得總筆數與分頁明細。
+        /// </summary>
         public async Task<(List<InventoryMaster> Items, int TotalCount)> GetInventoryOrdersAsync(int pageNumber, int pageSize, string keyword = "")
         {
             var list = new List<InventoryMaster>();
@@ -23,6 +32,7 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Connection = conn;
 
             var sqlBuilder = new System.Text.StringBuilder(@"
+                -- 語句 1：計算符合條件的總筆數
                 SELECT COUNT(1) 
                 FROM [dbo].[InventoryMaster] im
                 LEFT JOIN [dbo].[Employee] e ON im.[EmployeeID] = e.[EmployeeID]
@@ -33,6 +43,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             sqlBuilder.Append(@"
                 ;
+                -- 語句 2：分頁撈取實體資料
                 SELECT 
                     im.[InventoryID], im.[InventoryNo], im.[InventoryDate], 
                     im.[EmployeeID], im.[Remark], im.[Status],
@@ -44,6 +55,8 @@ namespace ERPLAB.DataAccess.Repositories
                     empCreate.[EmployeeNo] AS CreateUserNo_Display,
                     empUpdate.[EmployeeNo] AS UpdateUserNo_Display
                 FROM [dbo].[InventoryMaster] im
+                
+                -- 關聯 Employee 與 Accounts 表以取得人員顯示資訊
                 LEFT JOIN [dbo].[Employee] e ON im.[EmployeeID] = e.[EmployeeID]
                 LEFT JOIN [dbo].[Accounts] accCreate ON im.[CreateUser] = accCreate.[AccountID]
                 LEFT JOIN [dbo].[Employee] empCreate ON accCreate.[EmployeeID] = empCreate.[EmployeeID]
@@ -57,8 +70,10 @@ namespace ERPLAB.DataAccess.Repositories
                 cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Keyword", $"%{keyword.Trim()}%", 50));
             }
 
+            // 預設依單據 ID 遞減排序 (最新建立者優先)
             sqlBuilder.Append(" ORDER BY im.[InventoryID] DESC ");
 
+            // 分頁邊界防禦與參數處理
             if (pageSize > 0)
             {
                 sqlBuilder.Append(" OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;");
@@ -70,6 +85,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             cmd.CommandText = sqlBuilder.ToString();
 
+            // 處理雙重結果集 (Multiple Result Sets)
             using var reader = await cmd.ExecuteReaderAsync();
             if (await reader.ReadAsync()) totalCount = reader.GetInt32(0);
 
@@ -102,6 +118,9 @@ namespace ERPLAB.DataAccess.Repositories
             return (list, totalCount);
         }
 
+        /// <summary>
+        /// 取得指定盤點單之明細資料，並關聯商品主檔取得顯示名稱。
+        /// </summary>
         public async Task<List<InventoryDetail>> GetInventoryDetailsAsync(long inventoryId)
         {
             var list = new List<InventoryDetail>();
@@ -141,8 +160,13 @@ namespace ERPLAB.DataAccess.Repositories
         }
 
         // =====================================================================
-        // ➕ [交易引擎] 建立草稿 (TVP 寫入)
+        // 資料交易服務 (Command)
         // =====================================================================
+
+        /// <summary>
+        /// 建立盤點草稿。
+        /// 使用 SqlTransaction 確保主檔與明細檔寫入之原子性 (Atomicity)，明細部分透過 TVP 進行批次寫入。
+        /// </summary>
         public async Task<InventoryMaster> CreateInventoryOrderAsync(InventoryMaster master, List<InventoryDetail> details)
         {
             using var conn = await DbConnectionFactory.GetConnectionAsync();
@@ -198,9 +222,10 @@ namespace ERPLAB.DataAccess.Repositories
             catch { tx.Rollback(); throw; }
         }
 
-        // =====================================================================
-        // 📝 [更新引擎] 樂觀鎖與明細砍掉重練
-        // =====================================================================
+        /// <summary>
+        /// 更新盤點草稿。
+        /// 結合 RowVersion 與 ExpectedStatus 檢核樂觀鎖。明細檔採先刪後增 (Delete-then-Insert) 模式配合 TVP 寫入。
+        /// </summary>
         public async Task<byte[]> UpdateInventoryOrderDraftAsync(InventoryMaster master, List<InventoryDetail> details)
         {
             using var conn = await DbConnectionFactory.GetConnectionAsync();
@@ -228,6 +253,7 @@ namespace ERPLAB.DataAccess.Repositories
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateTimestamp("@RowVersion", master.RowVersion));
                 cmdMaster.Parameters.Add(SqlParameterFactory.CreateTinyInt("@ExpectedStatus", (byte)DocumentStatus.Draft));
 
+                // 樂觀鎖驗證：確認狀態未變動且 Timestamp 吻合
                 var result = await cmdMaster.ExecuteScalarAsync();
                 if (result == null) throw new DBConcurrencyException("此盤點單已被異動，或已改變狀態，無法修改！請重新載入資料。");
 
@@ -260,13 +286,12 @@ namespace ERPLAB.DataAccess.Repositories
             catch { tx.Rollback(); throw; }
         }
 
-        // =====================================================================
-        // 🗑️ [物理抹除引擎] 僅限草稿狀態可發動
-        // =====================================================================
+        /// <summary>
+        /// 物理刪除盤點草稿。
+        /// 僅允許刪除草稿狀態之單據。明細檔清理依賴資料庫層級 ON DELETE CASCADE 約束。
+        /// </summary>
         public async Task DeleteDraftAsync(long inventoryId, byte[] rowVersion)
         {
-            // 💡 依賴資料庫 DDL 中的 ON DELETE CASCADE (明細會自動被連帶刪除)
-            // 💡 依賴 Trigger [TR_InventoryMaster_ProtectDelete] 進行過帳防禦攔截
             string sql = @"
                 DELETE FROM [dbo].[InventoryMaster] 
                 WHERE [InventoryID] = @InventoryID 
@@ -287,9 +312,9 @@ namespace ERPLAB.DataAccess.Repositories
             }
         }
 
-        // =====================================================================
-        // 🔐 [狀態推進引擎] 差異沖平算法 (The Delta Adjustment Pattern)
-        // =====================================================================
+        /// <summary>
+        /// 盤點單過帳作業 (狀態推進與庫存異動)。
+        /// </summary>
         public async Task<byte[]> UpdateOrderStatusAsync(long inventoryId, byte[] rowVersion, int updateUser)
         {
             using var conn = await DbConnectionFactory.GetConnectionAsync();
@@ -318,10 +343,10 @@ namespace ERPLAB.DataAccess.Repositories
                 if (result == null) throw new DBConcurrencyException("單據狀態已發生變更，請重新載入後再試！");
 
                 // =====================================================================
-                // 📦 💡 [差異沖平算法] 
-                // 絕對禁止直接將庫存覆寫為 ActualStock！
-                // 必須計算 (實盤 - 帳面) 得到盤盈虧差異值，將此差異「加」回當前實體庫存。
-                // 如此方能免疫「盤點草稿期間，發生其他進銷貨交易」的併發覆寫地雷！
+                // 差異沖平算法 (Delta Adjustment Pattern)：
+                // 為了避免盤點作業期間發生其他進出庫交易導致的併發覆寫 (Concurrency Overwrite) 問題，
+                // 絕對禁止直接將庫存覆寫為實盤數量 (ActualStock)。
+                // 系統會計算盤盈虧的差異值 (ActualStock - SystemStock)，將此差異值加回當前實體庫存。
                 // =====================================================================
                 string stockUpdateSql = @"
                         UPDATE p

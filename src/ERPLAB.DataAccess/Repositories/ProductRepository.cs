@@ -6,14 +6,20 @@ using System.Data;
 namespace ERPLAB.DataAccess.Repositories
 {
     /// <summary>
-    /// 商品基本檔倉儲。
-    /// 核心防線：Update 時絕對隔離庫存欄位，防範透過基本檔維護畫面竄改庫存數量的重大內控漏洞。
+    /// 商品資料存取層 (Repository)
+    /// 負責處理 Product 實體的資料庫 I/O 操作。
+    /// 架構重點：嚴格隔離基本檔與庫存系統的寫入權限，於 Update 作業中物理排除 CurrentStock 欄位，確保庫存異動僅能由進銷存交易單據驅動。
     /// </summary>
     public class ProductRepository
     {
         // =====================================================================
-        // 🔍 [檢索引擎] 支援動態過濾停用資料、多欄位模糊搜尋與極速分頁
+        // 資料讀取服務 (Query)
         // =====================================================================
+
+        /// <summary>
+        /// 取得商品清單 (分頁查詢)
+        /// 採用單次 Batch 執行多段 SQL，同步取得總筆數與分頁明細，並透過 JOIN 取得建檔與異動人員資訊。
+        /// </summary>
         public async Task<(List<Product> Items, int TotalCount)> GetProductsAsync(int pageNumber, int pageSize, bool includeInactive = false, string keyword = "")
         {
             var list = new List<Product>();
@@ -24,6 +30,7 @@ namespace ERPLAB.DataAccess.Repositories
             using var cmd = new SqlCommand();
             cmd.Connection = conn;
 
+            // 將總筆數計算與分頁實體查詢合併為單一批次 (Batch) 執行
             var sqlBuilder = new System.Text.StringBuilder(@"
                 -- 語句 1：計算符合條件的總筆數
                 SELECT COUNT(1) 
@@ -39,7 +46,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             sqlBuilder.Append(@"
                 ;
-                -- 語句 2：分頁撈取實體資料與身分鑑識
+                -- 語句 2：分頁撈取實體資料與人員顯示資訊
                 SELECT 
                     p.[ProductID], p.[ProductNo], p.[ProductName], p.[MovingAverageCost],
                     p.[PurchasePrice], p.[SalesPrice], p.[CurrentStock], 
@@ -51,6 +58,8 @@ namespace ERPLAB.DataAccess.Repositories
                     empUpdate.[EmployeeNo] AS UpdateUserNo_Display
 
                 FROM [dbo].[Product] p
+                
+                -- 透過 Accounts 關聯至 Employee 主檔，取得建檔者與異動者的實際工號
                 LEFT JOIN [dbo].[Accounts] accCreate ON p.[CreateUser] = accCreate.[AccountID]
                 LEFT JOIN [dbo].[Employee] empCreate ON accCreate.[EmployeeID] = empCreate.[EmployeeID]
                 LEFT JOIN [dbo].[Accounts] accUpdate ON p.[UpdateUser] = accUpdate.[AccountID]
@@ -69,8 +78,10 @@ namespace ERPLAB.DataAccess.Repositories
 
             cmd.Parameters.Add(SqlParameterFactory.CreateBit("@IncludeInactive", includeInactive));
 
+            // 預設依商品 ID 遞減排序 (最新建立者優先)
             sqlBuilder.Append(" ORDER BY p.[ProductID] DESC ");
 
+            // 分頁邊界防禦與參數處理
             if (pageSize > 0)
             {
                 sqlBuilder.Append(" OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;");
@@ -79,7 +90,7 @@ namespace ERPLAB.DataAccess.Repositories
             }
             else if (pageSize == 0)
             {
-                sqlBuilder.Append(";");
+                sqlBuilder.Append(";"); // 取消分頁撈取全部
             }
             else
             {
@@ -88,6 +99,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             cmd.CommandText = sqlBuilder.ToString();
 
+            // 處理雙重結果集 (Multiple Result Sets)
             using var reader = await cmd.ExecuteReaderAsync();
 
             if (await reader.ReadAsync())
@@ -105,7 +117,6 @@ namespace ERPLAB.DataAccess.Repositories
                         ProductNo = reader.GetString(reader.GetOrdinal("ProductNo")),
                         ProductName = reader.GetString(reader.GetOrdinal("ProductName")),
 
-                        // 財務數值讀取
                         MovingAverageCost = reader.GetDecimal(reader.GetOrdinal("MovingAverageCost")),
                         PurchasePrice = reader.GetDecimal(reader.GetOrdinal("PurchasePrice")),
                         SalesPrice = reader.GetDecimal(reader.GetOrdinal("SalesPrice")),
@@ -132,9 +143,49 @@ namespace ERPLAB.DataAccess.Repositories
             return (list, totalCount);
         }
 
+        /// <summary>
+        /// 依據商品編號 (ProductNo) 查詢單筆商品資料。
+        /// 針對交易單據(如銷貨單、進貨單)輸入商品編號時的連動查詢進行優化，僅撈取必要欄位以降低網路封包傳輸量。
+        /// </summary>
+        public async Task<Product?> GetProductByNoAsync(string productNo)
+        {
+            string sql = @"
+                SELECT 
+                    [ProductID], [ProductNo], [ProductName], [SalesPrice], [PurchasePrice]
+                FROM [dbo].[Product]
+                WHERE [ProductNo] = @ProductNo AND [IsActive] = 1;";
+
+            using var conn = await DbConnectionFactory.GetConnectionAsync();
+            using var cmd = new SqlCommand(sql, conn);
+
+            // 確保 Parameter 型別為 VARCHAR，避免引發隱式轉型導致無法利用 Index Seek (索引尋結)
+            cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@ProductNo", productNo, 20));
+
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            if (await reader.ReadAsync())
+            {
+                return new Product
+                {
+                    ProductID = reader.GetInt32(reader.GetOrdinal("ProductID")),
+                    ProductNo = reader.GetString(reader.GetOrdinal("ProductNo")),
+                    ProductName = reader.GetString(reader.GetOrdinal("ProductName")),
+                    SalesPrice = reader.GetDecimal(reader.GetOrdinal("SalesPrice")),
+                    PurchasePrice = reader.GetDecimal(reader.GetOrdinal("PurchasePrice"))
+                };
+            }
+
+            return null;
+        }
+
         // =====================================================================
-        // ➕ [寫入引擎] 
+        // 資料交易服務 (Command)
         // =====================================================================
+
+        /// <summary>
+        /// 新增商品資料。
+        /// 透過 OUTPUT 子句同步取回資料庫生成的 ID 與 Timestamp (RowVersion)。
+        /// </summary>
         public async Task<Product> CreateAsync(Product entity)
         {
             string sql = @"
@@ -156,7 +207,7 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateDecimal("@PurchasePrice", entity.PurchasePrice, 18, 2));
             cmd.Parameters.Add(SqlParameterFactory.CreateDecimal("@SalesPrice", entity.SalesPrice, 18, 2));
 
-            // 新增時，庫存預設寫入 0 或前端給定的初始值
+            // 建檔時允許賦予初始庫存值
             cmd.Parameters.Add(SqlParameterFactory.CreateInt("@CurrentStock", entity.CurrentStock));
 
             cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Description", entity.Description, -1)); // MAX
@@ -176,13 +227,12 @@ namespace ERPLAB.DataAccess.Repositories
             return entity;
         }
 
-        // =====================================================================
-        // 📝 [更新引擎] 樂觀鎖防禦與物理隔離
-        // =====================================================================
+        /// <summary>
+        /// 更新商品基本資料。
+        /// 實作樂觀鎖 (Optimistic Concurrency) 驗證。特別排除了 CurrentStock 欄位，確保庫存一致性不被基本檔維護功能破壞。
+        /// </summary>
         public async Task<byte[]> UpdateAsync(Product entity)
         {
-            // 🚨 物理隔離防線：UPDATE 語法中「絕對禁止」出現 [CurrentStock]！
-            // 庫存只能由進銷存單據過帳時，透過交易發動增減。基本檔維護畫面無權干涉。
             string sql = @"
                 UPDATE [dbo].[Product] 
                 SET [ProductName] = @ProductName,
@@ -214,6 +264,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             var result = await cmd.ExecuteScalarAsync();
 
+            // 若回傳值為 null，代表受影響筆數為 0，表示資料已被刪除或發生樂觀鎖衝突
             if (result == null)
             {
                 throw new DBConcurrencyException("此商品資料已被異動，請重新載入最新資料後再試。");
@@ -222,6 +273,9 @@ namespace ERPLAB.DataAccess.Repositories
             return (byte[])result;
         }
 
+        /// <summary>
+        /// 更新商品啟用/停用狀態。
+        /// </summary>
         public async Task<byte[]> UpdateStatusAsync(int productId, bool targetActiveState, byte[] rowVersion, int updateUser)
         {
             string sql = @"
@@ -248,38 +302,6 @@ namespace ERPLAB.DataAccess.Repositories
             }
 
             return (byte[])result;
-        }
-
-        public async Task<Product?> GetProductByNoAsync(string productNo)
-        {
-            // 💡 物理優化：只撈取打單當下「絕對必要」的欄位，將網路 I/O 封包體積壓縮到極限
-            string sql = @"
-                SELECT 
-                    [ProductID], [ProductNo], [ProductName], [SalesPrice], [PurchasePrice]
-                FROM [dbo].[Product]
-                WHERE [ProductNo] = @ProductNo AND [IsActive] = 1;";
-
-            using var conn = await DbConnectionFactory.GetConnectionAsync();
-            using var cmd = new SqlCommand(sql, conn);
-
-            // 嚴格綁定 VARCHAR 防禦隱式轉換，觸發 SQL Server 的 Index Seek (索引尋結)
-            cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@ProductNo", productNo, 20));
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                return new Product
-                {
-                    ProductID = reader.GetInt32(reader.GetOrdinal("ProductID")),
-                    ProductNo = reader.GetString(reader.GetOrdinal("ProductNo")),
-                    ProductName = reader.GetString(reader.GetOrdinal("ProductName")),
-                    SalesPrice = reader.GetDecimal(reader.GetOrdinal("SalesPrice")),
-                    PurchasePrice = reader.GetDecimal(reader.GetOrdinal("PurchasePrice"))
-                };
-            }
-
-            return null; // 找不到或已停用，回傳 null 供 UI 攔截
         }
     }
 }

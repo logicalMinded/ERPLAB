@@ -6,18 +6,23 @@ using System.Data;
 
 namespace ERPLAB.DataAccess.Repositories
 {
+    /// <summary>
+    /// 客戶資料存取層 (Repository)
+    /// 負責處理 Customer 實體的資料庫 I/O 操作，包含多重結果集分頁查詢與樂觀鎖 (Optimistic Concurrency) 併發控制。
+    /// </summary>
     public class CustomerRepository
     {
         // =====================================================================
-        // 🔍 [檢索引擎] 支援動態過濾停用資料、多欄位模糊搜尋與極速分頁
+        // 資料讀取服務 (Query)
         // =====================================================================
 
         /// <summary>
-        /// 取得廠商清單 (分頁模式)
+        /// 取得客戶清單 (分頁查詢)
+        /// 採用單次 Batch 執行多段 SQL，同步取得總筆數與分頁明細以最佳化效能。
         /// </summary>
         /// <param name="pageNumber">當前頁碼 (自 1 起算)</param>
-        /// <param name="pageSize">每頁筆數 (傳入 0 代表全撈)</param>
-        /// <param name="includeInactive">是否包含已停用廠商</param>
+        /// <param name="pageSize">每頁筆數 (傳入 0 代表取消分頁撈取全部)</param>
+        /// <param name="includeInactive">是否包含已停用之客戶</param>
         /// <param name="keyword">搜尋關鍵字</param>
         public async Task<(List<Customer> Items, int TotalCount)> GetCustomersAsync(int pageNumber, int pageSize, bool includeInactive = false, string keyword = "")
         {
@@ -29,7 +34,7 @@ namespace ERPLAB.DataAccess.Repositories
             using var cmd = new SqlCommand();
             cmd.Connection = conn;
 
-            // 一次網路 I/O，同時撈取「符合條件的總筆數」與「當頁明細」
+            // 將總筆數計算與分頁實體查詢合併為單一批次 (Batch) 執行，減少一次資料庫往返 (Round-trip) 成本
             var sqlBuilder = new System.Text.StringBuilder(@"
                 -- 語句 1：計算符合條件的總筆數
                 SELECT COUNT(1) 
@@ -55,17 +60,16 @@ namespace ERPLAB.DataAccess.Repositories
                     c.[CreateTime], c.[CreateUser], c.[UpdateTime], c.[UpdateUser], 
                     c.[IsActive], c.[RowVersion],
                     
-                    -- 💡 [審計軌跡快照] 跨表抓出實體員工工號
+                    -- 審計軌跡所需之顯示欄位
                     empCreate.[EmployeeNo] AS CreateUserNo_Display,
                     empUpdate.[EmployeeNo] AS UpdateUserNo_Display
 
                 FROM [dbo].[Customer] c
 
-                -- 💡 [身分鑑識引擎] 建檔者：透過 Accounts 實體橋接至 Employee
+                -- 透過 Accounts 關聯至 Employee 主檔，取得建檔者與異動者的實際工號 (EmployeeNo)
                 LEFT JOIN [dbo].[Accounts] accCreate ON c.[CreateUser] = accCreate.[AccountID]
                 LEFT JOIN [dbo].[Employee] empCreate ON accCreate.[EmployeeID] = empCreate.[EmployeeID]
                 
-                -- 💡 [身分鑑識引擎] 異動者：透過 Accounts 實體橋接至 Employee
                 LEFT JOIN [dbo].[Accounts] accUpdate ON c.[UpdateUser] = accUpdate.[AccountID]
                 LEFT JOIN [dbo].[Employee] empUpdate ON accUpdate.[EmployeeID] = empUpdate.[EmployeeID]
 
@@ -79,50 +83,50 @@ namespace ERPLAB.DataAccess.Repositories
                     c.[TaxID] LIKE @Keyword OR 
                     c.[PhoneNumber] LIKE @Keyword) ");
 
-                // 💡 參數只需加入一次，同一個 Batch 內的兩段 SELECT 皆可共用此變數
+                // SQL 參數於同一個 Command 批次中可跨 SELECT 語句重複綁定
                 cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@Keyword", $"%{keyword.Trim()}%", 50));
             }
 
             cmd.Parameters.Add(SqlParameterFactory.CreateBit("@IncludeInactive", includeInactive));
 
-            // 預設採用 ID 遞減排序 (最新建立的排在最前)
+            // 預設採用 ID 遞減排序 (確保最新建立的資料優先呈現)
             sqlBuilder.Append(" ORDER BY c.[CustomerID] DESC ");
 
             // =====================================================================
-            // 💡 [分頁引擎開關與絕對邊界防禦] 
+            // 分頁邏輯與參數邊界驗證
             // =====================================================================
             if (pageSize > 0)
             {
-                // 標準分頁模式
+                // 標準 OFFSET-FETCH 分頁模式
                 sqlBuilder.Append(" OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;");
                 cmd.Parameters.Add(SqlParameterFactory.CreateInt("@Offset", offset));
                 cmd.Parameters.Add(SqlParameterFactory.CreateInt("@PageSize", pageSize));
             }
             else if (pageSize == 0)
             {
-                // 特例：關閉分頁，全撈 (如匯出 Excel 或下拉選單使用)
+                // 特殊情境：關閉分頁進行全資料撈取 (如匯出 Excel 或綁定下拉選單)
                 sqlBuilder.Append(";");
             }
             else
             {
-                // 🚨 物理防線：徹底封殺負數等不合法的髒參數，觸發 Fail-Fast
+                // Fail-Fast 機制：阻擋無效的負數分頁參數
                 throw new ArgumentOutOfRangeException(nameof(pageSize), "分頁筆數 (pageSize) 必須大於或等於 0！");
             }
 
             cmd.CommandText = sqlBuilder.ToString();
 
             // =====================================================================
-            // 🔄 雙重結果集讀取 (Multiple Result Sets)
+            // 處理雙重結果集 (Multiple Result Sets)
             // =====================================================================
             using var reader = await cmd.ExecuteReaderAsync();
 
-            // 讀取第一段結果：總筆數
+            // 讀取第一段結果：符合條件之總筆數
             if (await reader.ReadAsync())
             {
                 totalCount = reader.GetInt32(0);
             }
 
-            // 跳躍至第二段結果：分頁實體資料
+            // 推進至第二段結果：分頁實體資料
             if (await reader.NextResultAsync())
             {
                 while (await reader.ReadAsync())
@@ -163,8 +167,14 @@ namespace ERPLAB.DataAccess.Repositories
 
             return (list, totalCount);
         }
+
+        // =====================================================================
+        // 資料交易服務 (Command)
+        // =====================================================================
+
         /// <summary>
-        /// 💡 寫入廠商並同時取回 ID 與 RowVersion (降低往返 I/O)
+        /// 新增客戶資料。
+        /// 透過 OUTPUT 子句同步取回資料庫生成的 ID 與 Timestamp (RowVersion)，避免額外的 SELECT 查詢。
         /// </summary>
         public async Task<Customer> CreateAsync(Customer entity)
         {
@@ -182,7 +192,7 @@ namespace ERPLAB.DataAccess.Repositories
             using var conn = await DbConnectionFactory.GetConnectionAsync();
             using var cmd = new SqlCommand(sql, conn);
 
-            // 嚴格參數綁定：隔離 VARCHAR 與 NVARCHAR
+            // 嚴格參數綁定：明確定義 VARCHAR 與 NVARCHAR 以避免隱式轉型效能耗損
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@CustomerNo", entity.CustomerNo, 20));
             cmd.Parameters.Add(SqlParameterFactory.CreateNVarChar("@CustomerName", entity.CustomerName, 50));
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@TaxID", entity.TaxID, 8));
@@ -206,11 +216,12 @@ namespace ERPLAB.DataAccess.Repositories
         }
 
         /// <summary>
-        /// 💡 更新廠商 (發動樂觀鎖防禦)
+        /// 更新客戶資料。
+        /// 實作樂觀鎖防禦機制，若資料於讀取後遭他人異動，將拋出 DBConcurrencyException。
         /// </summary>
         public async Task<byte[]> UpdateAsync(Customer entity)
         {
-            // (CustomerNo 為業務編號，依企業內控常理，建檔後通常不允許隨意修改，故不列入 UPDATE)
+            // 依據內控原則，客戶業務編號 (CustomerNo) 經建檔後不允許修改，故排除於 UPDATE 語句之外。
             string sql = @"
                 UPDATE [dbo].[Customer] 
                 SET [CustomerName] = @CustomerName,
@@ -243,24 +254,27 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateBit("@IsActive", entity.IsActive));
             cmd.Parameters.Add(SqlParameterFactory.CreateInt("@UpdateUser", entity.UpdateUser));
 
-            // 併發防禦條件
+            // 樂觀鎖驗證條件
             cmd.Parameters.Add(SqlParameterFactory.CreateInt("@CustomerID", entity.CustomerID));
             cmd.Parameters.Add(SqlParameterFactory.CreateTimestamp("@RowVersion", entity.RowVersion));
 
             var result = await cmd.ExecuteScalarAsync();
 
-            // 若 result 為 null，代表 rowsAffected == 0，樂觀鎖觸發或資料已被刪除
+            // 若 OUTPUT 未回傳值 (result 為 null)，代表受影響筆數為 0，表示資料已被刪除或發生樂觀鎖衝突
             if (result == null)
             {
-                throw new DBConcurrencyException("此廠商資料已被其他使用者異動，請重新載入最新資料後再試。");
+                throw new DBConcurrencyException("此客戶資料已被其他使用者異動，請重新載入最新資料後再試。");
             }
 
-            return (byte[])result; // 回傳最新版時間戳記供 UI 更新
+            return (byte[])result; // 回傳最新版 RowVersion 供呼叫端更新狀態
         }
 
+        /// <summary>
+        /// 更新客戶停用/啟用狀態。
+        /// </summary>
         public async Task<byte[]> UpdateStatusAsync(int customerId, bool targetActiveState, byte[] rowVersion, int updateUser)
         {
-            // 💡 絕對純潔的 SQL：只動 IsActive、時間與人員。其他業務資料 100% 免疫。
+            // 獨立的狀態更新語句：僅異動狀態與審計欄位 (時間/人員)，避免影響其他業務欄位並降低併發衝突機率。
             string sql = @"
                 UPDATE [dbo].[Customer] 
                 SET [IsActive] = @IsActive,
@@ -281,7 +295,7 @@ namespace ERPLAB.DataAccess.Repositories
 
             if (result == null)
             {
-                throw new DBConcurrencyException("此廠商狀態已被其他使用者異動，請重新載入最新資料後再試。");
+                throw new DBConcurrencyException("此客戶狀態已被其他使用者異動，請重新載入最新資料後再試。");
             }
 
             return (byte[])result;
