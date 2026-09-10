@@ -3,14 +3,21 @@ using ERPLAB.UI.Core;
 
 namespace ERPLAB.UI
 {
+    /// <summary>
+    /// 系統主框架視窗 (Main Application Frame)。
+    /// 負責系統啟動後之核心 UI 佈局，包含：基於 RBAC 之動態遞迴導覽選單、
+    /// 透過反射 (Reflection) 動態載入之頁籤路由，以及基於 GDI+ 之自訂頁籤渲染 (Custom Tab Drawing)。
+    /// </summary>
     public partial class MainForm : Form
     {
         private readonly List<SystemNode> _authorizedNodes;
+
         public MainForm()
         {
             InitializeComponent();
             _authorizedNodes = SessionContext.AuthorizedNodes ?? new List<SystemNode>();
-            // 💡 啟動 TabControl 的自繪模式，以實作「X」關閉按鈕
+
+            // 啟用 TabControl 之自訂繪製模式 (OwnerDrawFixed)，以實作自訂樣式與關閉按鈕
             tabControlMain.DrawMode = TabDrawMode.OwnerDrawFixed;
             tabControlMain.DrawItem += TabControlMain_DrawItem;
             tabControlMain.MouseDown += TabControlMain_MouseDown;
@@ -25,11 +32,12 @@ namespace ERPLAB.UI
         }
 
         // =====================================================================
-        // 🏠 [基礎引擎] 預設儀表板與登出機制
+        // 預設首頁與登出機制
         // =====================================================================
+
         private void LoadDefaultDashboard()
         {
-            // 💡 權限動態判斷：若具備戰情室權限，直接實體化 Dashboard 並嵌入首頁
+            // 權限動態判定：若使用者具備戰情室權限，則實例化 Dashboard 並嵌入首頁
             if (SessionContext.HasPermission("PAGE_SALES_DASHBOARD"))
             {
                 var dashboard = new Views.Reports.SalesDashboardPage();
@@ -44,7 +52,7 @@ namespace ERPLAB.UI
             }
             else
             {
-                // 若無權限，顯示一般基層員工的歡迎詞
+                // 若無該權限，則提供基礎預設歡迎頁面
                 TabPage homeTab = new TabPage("🏠 系統首頁  ")
                 {
                     Name = "HomeTab",
@@ -63,45 +71,46 @@ namespace ERPLAB.UI
                 tabControlMain.TabPages.Add(homeTab);
             }
         }
+
         private void btnLogout_Click(object? sender, EventArgs e)
         {
             if (MessageBox.Show("確定要登出並切換使用者嗎？", "登出確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 SessionContext.IsLogoutRequested = true;
                 SessionContext.Logout();
-                this.Close(); // 關閉主畫面，Program.cs 會接管並重啟 LoginForm
+                this.Close(); // 關閉主框架，交由 Program.cs 接管並重啟 LoginForm
             }
         }
 
         // =====================================================================
-        // 🍔 [建構引擎] N 層無限遞迴摺疊選單 (Recursive Accordion Menu)
-        // 核心理念：透過 FlowLayoutPanel 的容器特性，將每個模組視為「一個按鈕 + 一個子容器」。
-        // 透過遞迴深度 (Level) 動態計算左側縮排，達成視覺上的階層感。
+        // 動態遞迴導覽選單建構 (Recursive Accordion Menu)
+        // 透過 FlowLayoutPanel 之容器特性，將每個模組結構化為「觸發按鈕 + 子容器」。
+        // 依據階層深度 (Level) 動態計算左側縮排，建立視覺上之樹狀層級。
         // =====================================================================
         private void BuildAccordionMenu()
         {
             flpMenu.Controls.Clear();
             flpMenu.SuspendLayout();
 
-            // 預留垂直捲軸空間
+            // 預留垂直捲軸所需之空間
             int buttonWidth = flpMenu.Width - 25;
 
-            // 啟動遞迴：傳入 null 代表從最頂層的根模組開始，初始深度為 0
+            // 啟動遞迴建構：自最頂層 (parentId = null) 開始，初始深度為 0
             BuildMenuLevel(parentId: null, parentContainer: flpMenu, buttonWidth: buttonWidth, level: 0);
 
             flpMenu.ResumeLayout();
         }
 
         /// <summary>
-        /// 遞迴建構選單節點
+        /// 遞迴建構選單節點與容器
         /// </summary>
-        /// <param name="parentId">當下要尋找的父節點 ID</param>
-        /// <param name="parentContainer">要把產生的按鈕塞進哪個容器</param>
-        /// <param name="buttonWidth">按鈕統一寬度</param>
-        /// <param name="level">目前所在的階層深度 (0=根模組, 1=子模組, 2=孫模組...)</param>
+        /// <param name="parentId">父節點 ID</param>
+        /// <param name="parentContainer">掛載按鈕之目標容器</param>
+        /// <param name="buttonWidth">按鈕配置寬度</param>
+        /// <param name="level">所在階層深度 (0=根模組, 1=子模組...)</param>
         private void BuildMenuLevel(int? parentId, FlowLayoutPanel parentContainer, int buttonWidth, int level)
         {
-            // 撈出屬於目前 parentId 的所有節點 (排除按鈕層級 NodeType = 3)
+            // 查詢隸屬目前 parentId 之所有子節點 (排除功能按鈕層級 NodeType = 3)
             var nodes = _authorizedNodes
                 .Where(n => n.ParentNodeID == parentId && n.NodeType != 3)
                 .OrderBy(n => n.SortSeq)
@@ -109,15 +118,15 @@ namespace ERPLAB.UI
 
             foreach (var node in nodes)
             {
-                // 💡 動態縮排計算：每深一層，左側向內縮進 15px (實際上不是15px)
+                // 動態縮排計算：依據深度調整左側留白空間
                 int leftPadding = level * 15;
 
-                if (node.NodeType == 1) // 處理「模組」或「子模組」
+                if (node.NodeType == 1) // 處理「目錄模組」層級
                 {
-                    // 1. 動態建構模組按鈕
+                    // 1. 動態建構目錄展開按鈕
                     Button btnModule = new Button
                     {
-                        Text = new string(' ', leftPadding / 3) + "📁 " + node.NodeName, // 簡單的文字縮排
+                        Text = new string(' ', leftPadding / 3) + "📁 " + node.NodeName,
                         Width = buttonWidth,
                         Height = 45,
                         FlatStyle = FlatStyle.Flat,
@@ -130,31 +139,30 @@ namespace ERPLAB.UI
                     };
                     btnModule.FlatAppearance.BorderSize = 0;
 
-                    // 2. 動態建構該模組專屬的子容器
+                    // 2. 動態建構隸屬該目錄之子容器
                     FlowLayoutPanel pnlSubMenu = new FlowLayoutPanel
                     {
                         Width = buttonWidth,
-                        AutoSize = true, // 內部有元件時自動長高
+                        AutoSize = true,
                         FlowDirection = FlowDirection.TopDown,
                         WrapContents = false,
                         Margin = new Padding(0),
-                        Visible = false, // 預設摺疊
-                        // 隨著層級加深，背景色略微變暗以增加層次感
+                        Visible = false, // 預設狀態為摺疊
+                        // 隨層級加深微調背景色以區分視覺層次
                         BackColor = level == 0 ? Color.FromArgb(28, 28, 28) : Color.FromArgb(20, 20, 20)
                     };
 
-                    // 3. 綁定收合/展開事件
+                    // 3. 綁定目錄收合/展開事件
                     btnModule.Click += (sender, e) => pnlSubMenu.Visible = !pnlSubMenu.Visible;
 
                     // 4. 掛載至父容器
                     parentContainer.Controls.Add(btnModule);
                     parentContainer.Controls.Add(pnlSubMenu);
 
-                    // 5. 🚨 核心發動：往下一層遞迴鑽入！
-                    // 將剛剛建立的 pnlSubMenu 當作下一層的父容器傳遞進去
+                    // 5. 遞迴呼叫：向下鑽取建構子層級結構
                     BuildMenuLevel(node.NodeID, pnlSubMenu, buttonWidth, level + 1);
                 }
-                else if (node.NodeType == 2) // 處理「作業頁面」
+                else if (node.NodeType == 2) // 處理「作業頁面」層級
                 {
                     Button btnPage = new Button
                     {
@@ -168,22 +176,24 @@ namespace ERPLAB.UI
                         Font = new Font("微軟正黑體", 10, FontStyle.Regular),
                         Margin = new Padding(0),
                         Cursor = Cursors.Hand,
-                        Tag = node // 綁定實體供反射提取
+                        Tag = node // 綁定節點實體，供點擊時提取反射路徑
                     };
                     btnPage.FlatAppearance.BorderSize = 0;
                     btnPage.FlatAppearance.MouseOverBackColor = Color.FromArgb(62, 62, 66);
 
-                    // 綁定反射路由事件
+                    // 綁定頁籤路由事件
                     btnPage.Click += PageButton_Click;
 
-                    // 直接掛載至父容器 (不再往下遞迴)
+                    // 末端節點直接掛載至父容器，無需再進行遞迴
                     parentContainer.Controls.Add(btnPage);
                 }
             }
         }
 
         // =====================================================================
-        // 🪞 [反射引擎] 頁籤生命週期路由
+        // 動態路由與頁籤實例化 (Reflection-based Routing)
+        // 透過選單節點定義之類別路徑 (FormClassPath)，利用反射機制動態建立 UserControl 實體，
+        // 並封裝為 TabPage 載入主畫面。包含防止重複開啟同名頁籤之處理。
         // =====================================================================
         private void PageButton_Click(object? sender, EventArgs e)
         {
@@ -192,7 +202,7 @@ namespace ERPLAB.UI
                 string classPath = node.FormClassPath;
                 if (string.IsNullOrWhiteSpace(classPath)) return;
 
-                // 防禦：阻斷重複開頁
+                // 檢核防呆：若該頁面已開啟，則直接切換焦點，避免重複實例化
                 foreach (TabPage tab in tabControlMain.TabPages)
                 {
                     if (tab.Name == classPath)
@@ -211,7 +221,7 @@ namespace ERPLAB.UI
 
                 try
                 {
-                    // 實體化 BasePage 並封裝為 TabPage
+                    // 實例化目標頁面 (BasePage) 並將其嵌合至 TabPage 中
                     UserControl pageInstance = (UserControl)Activator.CreateInstance(pageType);
                     pageInstance.Dock = DockStyle.Fill;
 
@@ -232,11 +242,8 @@ namespace ERPLAB.UI
         }
 
         // =====================================================================
-        // ❌ [自繪引擎] TabPage 關閉機制與實體記憶體釋放
-        // =====================================================================
-        // =====================================================================
-        // ❌ [自繪引擎] 現代化頁籤狀態渲染與關閉機制
-        // 核心職責：接管 GDI+ 繪圖，實作「狀態高亮」、「頂部色條」與「實體釋放」。
+        // 自訂頁籤渲染機制 (GDI+ Custom Tab Rendering)
+        // 覆寫預設繪製邏輯，實作狀態高亮提示、色彩切換，以及動態繪製關閉按鈕 (X)。
         // =====================================================================
         private void TabControlMain_DrawItem(object sender, DrawItemEventArgs e)
         {
@@ -244,30 +251,29 @@ namespace ERPLAB.UI
             var tabPage = tabControl.TabPages[e.Index];
             var tabRect = tabControl.GetTabRect(e.Index);
 
-            // 💡 狀態機判定：這張頁籤是不是當前被選中的那張？
+            // 判斷當前繪製之頁籤是否為使用中之選取狀態
             bool isSelected = (e.Index == tabControl.SelectedIndex);
 
-            // 1. 決定視覺物理參數
-            Color backColor = isSelected ? Color.White : Color.FromArgb(230, 230, 230); // 選中純白，未選中淺灰
-            Color foreColor = isSelected ? Color.FromArgb(0, 122, 204) : Color.DimGray;  // 選中微軟藍，未選中深灰
+            // 1. 決定背景與文字色彩配置
+            Color backColor = isSelected ? Color.White : Color.FromArgb(230, 230, 230);
+            Color foreColor = isSelected ? Color.FromArgb(0, 122, 204) : Color.DimGray;
 
-            // 2. 繪製背景
+            // 2. 繪製頁籤背景
             using (var bgBrush = new SolidBrush(backColor))
             {
                 e.Graphics.FillRectangle(bgBrush, tabRect);
             }
 
-            // 3. 👑 繪製頂部高亮色條 (Top Highlight Bar) - 打造現代 Web 視覺感
+            // 3. 繪製頂部狀態高亮色條 (Top Highlight Bar)
             if (isSelected)
             {
                 using (var highlightBrush = new SolidBrush(Color.FromArgb(0, 122, 204)))
                 {
-                    // 在頁籤最頂部畫一條 3 像素粗的藍色橫線
                     e.Graphics.FillRectangle(highlightBrush, tabRect.Left, tabRect.Top, tabRect.Width, 3);
                 }
             }
 
-            // 4. 繪製文字 (選中時加粗)
+            // 4. 繪製頁籤文字 (選取時套用粗體樣式)
             int rightMargin = (e.Index == 0) ? 10 : 25;
             var textRect = new Rectangle(tabRect.Left + 5, tabRect.Top, tabRect.Width - rightMargin, tabRect.Height);
             using (var font = new Font(tabPage.Font, isSelected ? FontStyle.Bold : FontStyle.Regular))
@@ -276,21 +282,22 @@ namespace ERPLAB.UI
                 TextRenderer.DrawText(e.Graphics, realText, font, textRect, foreColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
 
-            // 5. 繪製關閉按鈕 (X) - 確保首頁 (Index 0) 絕對不畫
+            // 5. 繪製關閉按鈕 (首頁頁籤 Index = 0 不繪製關閉功能)
             if (e.Index > 0)
             {
                 var closeRect = new Rectangle(tabRect.Right - 20, tabRect.Top + 7, 15, 15);
 
-                // UX 優化：選中時 X 為明顯的黑色，未選中時為淡灰色
+                // 依據頁籤選取狀態調整關閉按鈕色彩，提升識別度
                 Color closeColor = isSelected ? Color.Black : Color.DarkGray;
                 TextRenderer.DrawText(e.Graphics, "x", new Font("Arial", 10, FontStyle.Bold), closeRect, closeColor);
             }
         }
+
         private void TabControlMain_MouseDown(object? sender, MouseEventArgs e)
         {
             var tabControl = (TabControl)sender;
 
-            // 從 Index 1 開始檢查，絕對禁止關閉首頁
+            // 偵測滑鼠點擊座標是否位於關閉按鈕範圍內 (避開 Index 0 之首頁頁籤)
             for (int i = 1; i < tabControl.TabPages.Count; i++)
             {
                 var tabRect = tabControl.GetTabRect(i);
@@ -300,6 +307,8 @@ namespace ERPLAB.UI
                 {
                     var targetTab = tabControl.TabPages[i];
                     tabControl.TabPages.Remove(targetTab);
+
+                    // 確實釋放資源，避免記憶體洩漏 (Memory Leak)
                     targetTab.Dispose();
                     break;
                 }

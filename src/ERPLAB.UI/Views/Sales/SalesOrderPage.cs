@@ -9,13 +9,14 @@ using System.Data;
 namespace ERPLAB.UI.Views.Sales
 {
     /// <summary>
-    /// 銷貨單主明細表維護模組 (Master-Detail 模式)。
-    /// 核心展示：TVP 批次寫入、Grid 盲打試算、4 維狀態機鎖死、與獨立微交易取號。
+    /// 銷貨單主明細表維護頁面 (Master-Detail Pattern)。
+    /// 繼承自 BasePage，負責處理銷貨單據之完整生命週期操作。
+    /// 實作 Table-Valued Parameter (TVP) 批次寫入、DataGridView 快速鍵盤輸入 (盲打)、狀態機防呆與自訂單據取號邏輯。
     /// </summary>
     public partial class SalesOrderPage : BasePage
     {
         // =====================================================================
-        // 💡 三層式架構：全數轉軌至 BLL Services
+        // 服務注入與全域狀態宣告
         // =====================================================================
         private readonly SalesOrderService _salesService;
         private readonly CustomerService _custService;
@@ -30,17 +31,17 @@ namespace ERPLAB.UI.Views.Sales
         private List<Base_City> _cityList = new();
         private List<Base_District> _allDistrictList = new();
 
-        // 狀態機定義：精確控制畫面行為與防呆
+        // 表單狀態列舉，用於控制 UI 互動模式與唯讀限制
         private FormState _currentState = FormState.Browse;
 
-        // 追蹤廠商實體 ID，防範字串脫鉤
+        // 追蹤客戶實體 ID，作為資料庫關聯之唯一依據
         private int _selectedCustomerID = 0;
 
         public SalesOrderPage()
         {
             InitializeComponent();
 
-            // 💡 物理優化：強制開啟 Grid 的雙重緩衝，解決捲動與載入時的渲染延遲
+            // 套用擴充方法開啟雙重緩衝，改善 DataGridView 渲染效能與滾動卡頓
             dgvSalesMaster.EnableDoubleBuffering(true);
             dgvSalesDetail.EnableDoubleBuffering(true);
 
@@ -49,25 +50,29 @@ namespace ERPLAB.UI.Views.Sales
             _prodService = new ProductService();
             _geoService = new GeographyService();
 
+            // 初始化資料綁定來源
             _bsMaster = new BindingSource();
             _bsDetail = new BindingSource();
             _masterBindingList = new ExtendedBindingList<SalesMaster>();
             _detailBindingList = new ExtendedBindingList<SalesDetail>();
 
-            // 💡 綁定生命週期與按鈕事件
+            // 統一於建構子掛載生命週期與控制項事件，確保執行順序
             this.Load += SalesOrderPage_Load;
 
+            // 透過 BindingSource 之 CurrentChanged 事件監聽焦點轉移
             _bsMaster.CurrentChanged += BsMaster_CurrentChanged;
 
-            // 💡 明細盲打試算引擎事件
+            // 明細快速輸入與即時試算事件綁定
             dgvSalesDetail.CellEndEdit += DgvSalesDetail_CellEndEdit;
             dgvSalesDetail.RowsRemoved += (s, e) => RecalculateTotalAmount();
             dgvSalesDetail.DefaultValuesNeeded += DgvSalesDetail_DefaultValuesNeeded;
-            // 💡 掛載三個觸發點，確保任何增刪改查，行號永遠精確連動
-            dgvSalesDetail.DataBindingComplete += (s, e) => UpdateRowHeaderNumbers(); // 撈取 DB 綁定完成時
-            dgvSalesDetail.RowsAdded += (s, e) => UpdateRowHeaderNumbers();           // 盲打新增了一列時
-            dgvSalesDetail.RowsRemoved += (s, e) => UpdateRowHeaderNumbers();         // 刪除了一列時
 
+            // 資料列標頭序號繪製與自適應 (支援資料綁定、新增與刪除事件)
+            dgvSalesDetail.DataBindingComplete += (s, e) => UpdateRowHeaderNumbers();
+            dgvSalesDetail.RowsAdded += (s, e) => UpdateRowHeaderNumbers();
+            dgvSalesDetail.RowsRemoved += (s, e) => UpdateRowHeaderNumbers();
+
+            // 主檔操作工具列
             btnAdd.Click += BtnAdd_Click;
             btnEdit.Click += BtnEdit_Click;
             btnSave.Click += BtnSave_Click;
@@ -75,9 +80,11 @@ namespace ERPLAB.UI.Views.Sales
             btnPost.Click += BtnPost_Click;
             btnVoid.Click += BtnVoid_Click;
 
+            // 明細資料列排序控制
             btnMoveUp.Click += btnMoveUp_Click;
             btnMoveDown.Click += btnMoveDown_Click;
 
+            // 資料檢索與分頁控制
             txtKeyword.KeyDown += TxtKeyword_KeyDown;
             btnSearch.Click += btnSearch_Click;
             btnRefresh.Click += btnRefresh_Click;
@@ -87,23 +94,27 @@ namespace ERPLAB.UI.Views.Sales
             cmbCity.SelectedIndexChanged += CmbCity_SelectedIndexChanged;
             cmbDistrict.SelectedIndexChanged += CmbDistrict_SelectedIndexChanged;
 
+            // 客戶檢索功能
             txtCustomerNo.KeyDown += txtCustomerNo_KeyDown;
             txtCustomerNo.TextChanged += TxtCustomerNo_TextChanged;
             btnLookupCustomer.Click += BtnLookupCustomer_Click;
 
+            // 綁定 Grid 繪圖事件：處理已註銷或作廢資料之視覺提示
             dgvSalesMaster.CellFormatting += dgvSalesMaster_CellFormatting;
         }
 
         private async void SalesOrderPage_Load(object? sender, EventArgs e)
         {
             // =====================================================================
-            // 🛡️ [防禦引擎 A] UI 啟動瞬間發動 RBAC 物理斷路
+            // 權限檢核 (RBAC)：依據使用者授權動態顯示操作按鈕
+            // 呼叫 BasePage 提供之 RequirePermission 進行控制項的實體隱藏
             // =====================================================================
             RequirePermission("ACT_SALE_ADD", btnAdd);
             RequirePermission("ACT_SALE_EDIT", btnEdit);
             RequirePermission("ACT_SALE_APPROVE", btnPost);
             RequirePermission("ACT_SALE_VOID", btnVoid);
 
+            // 根據新增或修改之授權，決定儲存與取消按鈕之可見性
             bool canWrite = SessionContext.HasPermission("ACT_SALE_ADD") || SessionContext.HasPermission("ACT_SALE_EDIT");
             btnSave.Visible = canWrite;
             btnCancel.Visible = canWrite;
@@ -117,7 +128,7 @@ namespace ERPLAB.UI.Views.Sales
             _bsDetail.DataSource = _detailBindingList;
             dgvSalesDetail.DataSource = _bsDetail;
 
-            // 載入基礎資料
+            // 載入初始資料
             await LoadGeographyDataAsync();
             await SearchDataAsync();
             SetUIState(FormState.Browse);
@@ -141,7 +152,7 @@ namespace ERPLAB.UI.Views.Sales
             dgvSalesDetail.RowHeadersWidthSizeMode = DataGridViewRowHeadersWidthSizeMode.AutoSizeToAllHeaders;
             if (dgvSalesDetail.Columns.Count == 0)
             {
-                // 💡 極速盲打版型：全數使用 TextBox 支援鍵盤速打
+                // 快速輸入版型：配置 Textbox 以支援無滑鼠之純鍵盤輸入作業
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ProductNo", DataPropertyName = "ProductNo_Display", HeaderText = "商品代碼 (輸入)", Width = 150 });
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ProductName", DataPropertyName = "ProductName_Display", HeaderText = "商品名稱", MinimumWidth = 100, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "Qty", DataPropertyName = "Qty", HeaderText = "數量", Width = 80, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight } });
@@ -149,14 +160,14 @@ namespace ERPLAB.UI.Views.Sales
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "SubTotal_Display", DataPropertyName = "SubTotal_Display", HeaderText = "小計", Width = 120, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight, BackColor = Color.WhiteSmoke } });
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "Remark", DataPropertyName = "Remark", HeaderText = "備註", Width = 150 });
 
-                // 隱藏的實體關聯鍵，供 C# 背後抓取使用
+                // 隱藏關聯鍵欄位，供後端邏輯對映使用
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ProductID", DataPropertyName = "ProductID", Visible = false });
                 dgvSalesDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "LineNo", DataPropertyName = "LineNo", Visible = false });
             }
         }
 
         // =====================================================================
-        // 🌍 [地理連動與廠商速查引擎]
+        // 地理資料連動與客戶檢索功能
         // =====================================================================
         private async Task LoadGeographyDataAsync()
         {
@@ -232,7 +243,7 @@ namespace ERPLAB.UI.Views.Sales
             txtCustomerNo.TextChanged += TxtCustomerNo_TextChanged;
             txtCustomerName.Text = c.CustomerName;
 
-            // 快照：帶入預設地址與地理資訊
+            // 帶入預設聯絡地址與地理資訊
             string zip = c.CustomZipCode ?? string.Empty;
             if (zip.Length >= 3)
             {
@@ -261,7 +272,7 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // 🔄 [資料流引擎] 搜尋與主檔綁定
+        // 資料查詢與綁定作業
         // =====================================================================
         private async void TxtKeyword_KeyDown(object? sender, KeyEventArgs e)
         {
@@ -275,7 +286,7 @@ namespace ERPLAB.UI.Views.Sales
 
         private async void txtCustomerNo_KeyDown(object? sender, KeyEventArgs e)
         {
-            // 物理防呆：只攔截 Enter 鍵，且瀏覽模式下絕對鎖死不執行
+            // 防呆處理：僅處理 Enter 鍵事件，且限制於編輯模式下觸發
             if (e.KeyCode != Keys.Enter || _currentState == FormState.Browse) return;
 
             e.Handled = true;
@@ -286,32 +297,32 @@ namespace ERPLAB.UI.Views.Sales
 
             try
             {
-                // 💡 呼叫 DAL 點查詢：利用分頁引擎限制只撈 1 筆，將網路 I/O 壓至最低
+                // 呼叫資料存取層：透過分頁引擎設定取回首筆資料，減少網路與資料庫負載
                 var result = await _custService.GetCustomersAsync(1, 1, false, inputNo);
 
-                // 嚴格比對字串 (無視大小寫)
+                // 進行字串嚴格比對 (不區分大小寫)
                 var match = result.Items.FirstOrDefault(c => c.CustomerNo.Equals(inputNo, StringComparison.OrdinalIgnoreCase));
 
                 if (match != null)
                 {
                     ApplySelectedCustomer(match);
 
-                    // 💡 盲打人體工學：查到廠商後，游標瞬間自動跳往「出貨地址」，雙手不離鍵盤
+                    // 自動切換焦點至出貨地址欄位，優化輸入流程
                     txtShipAddress.Focus();
                 }
                 else
                 {
-                    MessageBox.Show("找不到此廠商代碼！", "查無資料", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("找不到此客戶代碼！", "查無資料", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
-                    // 防禦：查無資料時，物理銷毀記憶體 ID 並清空畫面，逼迫重新驗證
+                    // 防呆處理：若查無資料，清除選取狀態以防寫入錯誤關聯 ID
                     _selectedCustomerID = 0;
                     txtCustomerName.Clear();
-                    txtCustomerNo.SelectAll(); // 方便使用者直接重打
+                    txtCustomerNo.SelectAll();
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"查詢廠商時發生異常：{ex.Message}", "系統錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"查詢客戶時發生異常：{ex.Message}", "系統錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -332,10 +343,6 @@ namespace ERPLAB.UI.Views.Sales
             try
             {
                 txtKeyword.Clear();
-                //chkShowVoided.CheckedChanged -= async (s, ev) => await SearchDataAsync();
-                //chkShowVoided.Checked = false;
-                //chkShowVoided.CheckedChanged += async (s, ev) => await SearchDataAsync();
-
                 ucPagination.ResetToFirstPage();
                 await SearchDataAsync();
             }
@@ -356,6 +363,7 @@ namespace ERPLAB.UI.Views.Sales
             {
                 var result = await _salesService.GetSalesOrdersAsync(currentPage, pageSize, keyword, showVoided);
 
+                // 若當前頁碼因資料刪除等原因導致越界，重新計算最後頁碼並再次執行查詢
                 if (result.Items.Count == 0 && result.TotalCount > 0)
                 {
                     int correctLastPage = (int)Math.Ceiling((double)result.TotalCount / pageSize);
@@ -376,7 +384,7 @@ namespace ERPLAB.UI.Views.Sales
 
                     targetMaster = (SalesMaster)_bsMaster.Current;
 
-                    // 💡 手動呼叫，因為事件已脫鉤
+                    // 因已暫停 CurrentChanged 事件，需手動呼叫 UI 更新
                     BindMasterUI(targetMaster);
                     await LoadDetailDataAsync(targetMaster.SalesID);
                 }
@@ -396,7 +404,7 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // 🔄 [明細資料流] 點擊主檔，非同步撈取明細
+        // 明細資料管理與同步作業
         // =====================================================================
         private async void BsMaster_CurrentChanged(object? sender, EventArgs e)
         {
@@ -465,7 +473,7 @@ namespace ERPLAB.UI.Views.Sales
             txtRemark.Text = m.Remark;
 
             // =====================================================================
-            // 💡 [視覺引擎] 4 維狀態機徽章渲染
+            // 狀態徽章 (Status Badge) 與按鈕文字之動態渲染
             // =====================================================================
             switch (m.Status)
             {
@@ -528,20 +536,19 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // 🔢 [視覺引擎] 原生列首行號重編 (Native Row Header Numbering)
-        // 核心職責：將實體順序轉化為列首的文字，完美支援 WinForms 的自動寬度調整。
+        // 資料列標頭序號處理
+        // 賦予 DataGridViewRow HeaderCell 數值，配合列寬自適應設計
         // =====================================================================
         private void UpdateRowHeaderNumbers()
         {
-            // 物理防呆：暫停佈局，防止迴圈賦值時引發畫面閃爍
+            // 暫停畫面佈局更新以防畫面閃爍
             dgvSalesDetail.SuspendLayout();
 
             foreach (DataGridViewRow row in dgvSalesDetail.Rows)
             {
-                // 跳過最下方那行帶有星號 (*) 的待新增列
+                // 略過允許新增資料時最末端之空白列
                 if (row.IsNewRow) continue;
 
-                // 💡 將列索引 (Index + 1) 直接塞給原生的 HeaderCell
                 row.HeaderCell.Value = (row.Index + 1).ToString();
             }
 
@@ -549,7 +556,7 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // ⚡ [極速盲打試算引擎] (Blind-Typing & Calculation)
+        // 明細資料編輯與即時試算功能
         // =====================================================================
         private void DgvSalesDetail_DefaultValuesNeeded(object? sender, DataGridViewRowEventArgs e)
         {
@@ -563,7 +570,7 @@ namespace ERPLAB.UI.Views.Sales
 
             var colName = dgvSalesDetail.Columns[e.ColumnIndex].Name;
 
-            // 💡 盲打查詢：輸入代碼，離開格子瞬間去 DB 把商品找回來回填
+            // 處理商品代碼輸入，向後端查詢對應資訊並回填明細欄位
             if (colName == "ProductNo")
             {
                 string? inputNo = dgvSalesDetail.Rows[e.RowIndex].Cells["ProductNo"].Value?.ToString();
@@ -589,12 +596,12 @@ namespace ERPLAB.UI.Views.Sales
                 }
             }
 
-            // 即時試算：單價或數量改變時，強迫結束編輯並重新加總
+            // 監聽數量或單價變動，觸發結束編輯模式並重新計算總計
             if (colName == "Qty" || colName == "UnitPrice" || colName == "ProductNo")
             {
                 dgvSalesDetail.EndEdit();
                 RecalculateTotalAmount();
-                dgvSalesDetail.InvalidateRow(e.RowIndex); // 觸發小計欄位重繪
+                dgvSalesDetail.InvalidateRow(e.RowIndex); // 強制重繪當前列，更新小計顯示
             }
         }
 
@@ -603,16 +610,12 @@ namespace ERPLAB.UI.Views.Sales
             // 確保索引在合法範圍內
             if (e.RowIndex >= 0 && e.RowIndex < dgvSalesMaster.Rows.Count)
             {
-                // 取得該列綁定的實體物件
                 var salesMaster = dgvSalesMaster.Rows[e.RowIndex].DataBoundItem as SalesMaster;
 
-                // 若該廠商已被停用 (IsActive == false)
+                // 若單據狀態為已註銷 (3) 或已作廢 (4)，變更列樣式以提醒使用者
                 if (salesMaster != null && (salesMaster.Status == 3 || salesMaster.Status == 4) && e.CellStyle != null)
                 {
-                    // 💡 字體顏色改為深灰色
                     e.CellStyle.ForeColor = System.Drawing.Color.DarkGray;
-
-                    // 💡 加上物理刪除線 (Strikeout)，產生強烈的視覺斷層，警告使用者此為無效資料
                     e.CellStyle.Font = new System.Drawing.Font(dgvSalesMaster.Font, System.Drawing.FontStyle.Strikeout);
                 }
             }
@@ -625,7 +628,8 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // ⚙️ [狀態機引擎] 單據生命週期唯讀鎖死
+        // 狀態機 (State Machine) 控制邏輯
+        // 依據單據狀態與操作模式控制前端介面屬性
         // =====================================================================
         private void SetUIState(FormState state)
         {
@@ -634,7 +638,7 @@ namespace ERPLAB.UI.Views.Sales
             bool isBrowse = (state == FormState.Browse);
 
             var master = _bsMaster.Current as SalesMaster;
-            // 💡 核心防線：只有狀態 1 (未過帳/草稿) 且處於編輯模式時，才允許修改資料
+            // 權限防呆控制：僅草稿狀態且處於編輯模式下開放資料異動
             bool isDraft = (state == FormState.Add) || (master != null && master.Status == (byte)DocumentStatus.Draft);
             bool canEditFields = isEditing && isDraft;
 
@@ -649,7 +653,7 @@ namespace ERPLAB.UI.Views.Sales
             cmbCity.Enabled = canEditFields;
             cmbDistrict.Enabled = canEditFields;
 
-            // 💡 明細 Grid 防線
+            // 明細 Grid 狀態控制
             dgvSalesDetail.ReadOnly = !canEditFields;
             dgvSalesDetail.AllowUserToAddRows = canEditFields;
             dgvSalesDetail.AllowUserToDeleteRows = canEditFields;
@@ -662,14 +666,12 @@ namespace ERPLAB.UI.Views.Sales
 
             // 基礎 CRUD 按鈕狀態
             btnAdd.Enabled = !isEditing;
-            btnEdit.Enabled = !isEditing && master != null && isDraft; // 只有草稿能進入 Edit
+            btnEdit.Enabled = !isEditing && master != null && isDraft;
             btnSave.Enabled = isEditing;
             btnCancel.Enabled = isEditing;
             btnRefresh.Enabled = !isEditing;
 
-            // =====================================================================
-            // 🛡️ [狀態推進按鈕防線] 動態切換作廢/註銷語意
-            // =====================================================================
+            // 單據狀態流轉控制按鈕防呆
             btnPost.Enabled = isBrowse && master != null && master.Status == (byte)DocumentStatus.Draft;
             btnVoid.Enabled = isBrowse && master != null &&
                               (master.Status == (byte)DocumentStatus.Draft || master.Status == (byte)DocumentStatus.Posted);
@@ -684,7 +686,7 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // 💾 [交易引擎] TVP 批次寫入與 SqlTransaction 存檔
+        // 資料異動作業 (新增、修改、狀態切換與樂觀鎖處理)
         // =====================================================================
         private void BtnAdd_Click(object? sender, EventArgs e) => SetUIState(FormState.Add);
         private void BtnEdit_Click(object? sender, EventArgs e) => SetUIState(FormState.Edit);
@@ -695,7 +697,7 @@ namespace ERPLAB.UI.Views.Sales
             if (_bsMaster.Current is SalesMaster master)
             {
                 BindMasterUI(master);
-                // 💡 放棄修改時，必須重撈明細，確保畫面還原為 DB 真實狀態
+                // 放棄修改時重新載入明細，還原畫面與資料庫同步狀態
                 _ = LoadDetailDataAsync(master.SalesID);
             }
             else { ClearMasterUI(); }
@@ -703,11 +705,11 @@ namespace ERPLAB.UI.Views.Sales
 
         private async void BtnSave_Click(object? sender, EventArgs e)
         {
-            // 1. 強制結束 Grid 編輯狀態，確保盲打數值推入 BindingList
+            // 強制結束 DataGridView 編輯狀態，確保數值推入資料繫結集合
             dgvSalesDetail.EndEdit();
             _bsDetail.EndEdit();
 
-            // 2. 前端物理防呆
+            // 基礎資料檢核
             if (cmbDistrict.SelectedValue == null || string.IsNullOrWhiteSpace(txtCustomerNo.Text) || string.IsNullOrWhiteSpace(txtShipAddress.Text))
             {
                 MessageBox.Show("藍色欄位為必填欄位！", "驗證失敗", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -721,7 +723,7 @@ namespace ERPLAB.UI.Views.Sales
                 return;
             }
 
-            // 💡 物理洗淨：剃除 Grid 最後一行的空白新增列，以及沒有打商品 ID 的髒資料
+            // 過濾並剃除未填寫商品代碼或數量之無效明細列
             var validDetails = _detailBindingList.Where(d => d.ProductID > 0 && d.Qty > 0).ToList();
             if (validDetails.Count == 0)
             {
@@ -735,31 +737,31 @@ namespace ERPLAB.UI.Views.Sales
             var currentMaster = _currentState == FormState.Add ? new SalesMaster() : (_bsMaster.Current as SalesMaster);
             if (currentMaster == null) return;
 
-            // 3. DTO Mapping
+            // 將 UI 畫面資料對映回記憶體實體 (DTO Mapping)
             string front = txtShipZipFront.Text.Trim();
             string rear = txtShipZipRear.Text.Trim();
             currentMaster.ShipZipCode = string.IsNullOrEmpty(rear) ? front : front + rear;
 
             currentMaster.SalesDate = dtpSalesDate.Value;
             currentMaster.CustomerID = _selectedCustomerID;
-            currentMaster.ShipDistrictID = (int)cmbDistrict.SelectedValue; // 💡 確保實體有此欄位
+            currentMaster.ShipDistrictID = (int)cmbDistrict.SelectedValue;
             currentMaster.ShipAddress = txtShipAddress.Text.Trim();
             currentMaster.Remark = string.IsNullOrWhiteSpace(txtRemark.Text) ? null : txtRemark.Text.Trim();
             currentMaster.UpdateUser = SessionContext.CurrentAccountID;
 
-            // 💡 物理安插：為明細補上嚴格連續的行號 (LineNo)
+            // 依序指派明細行號
             for (int i = 0; i < validDetails.Count; i++) validDetails[i].LineNo = i + 1;
 
             bool success = await SafeExecuteAsync(async () =>
             {
                 if (_currentState == FormState.Add)
                 {
-                    // 🚀 發動分散式交易 + TVP 批次寫入
+                    // 執行分散式交易與 TVP 批次寫入
                     currentMaster = await _salesService.CreateSalesOrderAsync(currentMaster, validDetails, SessionContext.CurrentAccountID);
                 }
                 else if (_currentState == FormState.Edit)
                 {
-                    // 🚀 發動樂觀鎖 + 明細砍掉重練
+                    // 執行樂觀鎖檢查與草稿更新作業
                     byte[] newRowVersion = await _salesService.UpdateSalesOrderDraftAsync(currentMaster, validDetails, SessionContext.CurrentAccountID);
                 }
             },
@@ -768,7 +770,7 @@ namespace ERPLAB.UI.Views.Sales
             if (success)
             {
                 string actionName = _currentState == FormState.Add ? "新增" : "更新";
-                MessageBox.Show($"{actionName}成功！單號：{currentMaster.SalesNo}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{actionName}成功！單號：{currentMaster.SalesNo}", "系統提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 if (_currentState == FormState.Add)
                 {
                     txtKeyword.Clear();
@@ -789,7 +791,7 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // 🔐 [狀態推進引擎] 審核過帳與作廢
+        // 單據狀態作業流程 (審核過帳、註銷草稿、作廢單據)
         // =====================================================================
         private async void BtnPost_Click(object? sender, EventArgs e)
         {
@@ -817,7 +819,7 @@ namespace ERPLAB.UI.Views.Sales
             {
                 bool success = await SafeExecuteAsync(async () =>
                 {
-                    // 🚀 執行狀態機單向推進與樂觀鎖防禦
+                    // 執行單據狀態切換與樂觀鎖防禦
                     _ = await _salesService.UpdateOrderStatusAsync(
                         currentMaster.SalesID,
                         expectedStatus,
@@ -837,24 +839,21 @@ namespace ERPLAB.UI.Views.Sales
         }
 
         // =====================================================================
-        // ↕️ [排序引擎] 明細列上下移動 (精確防呆版)
-        // 核心職責：純記憶體指標交換，維持實體的絕對純潔性。
+        // 明細資料列排序調整處理
+        // 操作指標改變資料順序，以變更實際寫入資料庫之排序
         // =====================================================================
         private void btnMoveUp_Click(object? sender, EventArgs e)
         {
-            // 防線 1：非編輯模式，或根本沒有選取資料時，物理阻斷
             if (_currentState == FormState.Browse || _bsDetail.Current == null) return;
 
-            // 取得目前 BindingSource 鎖定的實體索引
             int currentIndex = _bsDetail.Position;
 
-            // 防線 2：如果已經在最頂端 (Index 0)，無法再往上移
+            // 防止首列向上移動
             if (currentIndex <= 0) return;
 
-            // 💡 物理交換 (Memory Swap)：從舊位置拔除，插入新位置 (上移一格)
             var item = _detailBindingList[currentIndex];
 
-            // 物理凍結：暫停事件觸發，防止重繪閃爍
+            // 暫停 ListChanged 事件，降低重複繪圖之成本
             _detailBindingList.RaiseListChangedEvents = false;
 
             _detailBindingList.RemoveAt(currentIndex);
@@ -862,25 +861,22 @@ namespace ERPLAB.UI.Views.Sales
 
             _detailBindingList.RaiseListChangedEvents = true;
 
-            // 💡 強制大管家重整，並將焦點跟隨到移動後的新位置
+            // 呼叫 ResetBindings 強制更新，並跟隨定位至移動後的位置
             _bsDetail.ResetBindings(false);
             _bsDetail.Position = currentIndex - 1;
         }
+
         private void btnMoveDown_Click(object? sender, EventArgs e)
         {
-            // 防線 1：非編輯模式，或根本沒有選取資料時，物理阻斷
             if (_currentState == FormState.Browse || _bsDetail.Current == null) return;
 
             int currentIndex = _bsDetail.Position;
 
-            // 防線 2：如果已經在最底端，無法再往下移
-            // 注意：若 DataGridView 開啟 AllowUserToAddRows，最底下會有一行「星號空白列」。
-            // _detailBindingList.Count 只包含「真正已輸入的實體」，不受幽靈空白列影響，
-            // 故最高索引絕對是 Count - 1。
+            // 若 DataGridView 允許新增資料 (AllowUserToAddRows = true)，清單最末會自動產生一筆空列。
+            // 使用 Count 計算索引，即可略過此末端保留列之影響。
             int maxIndex = _detailBindingList.Count - 1;
             if (currentIndex >= maxIndex) return;
 
-            // 💡 物理交換 (Memory Swap)：從舊位置拔除，插入新位置 (下移一格)
             var item = _detailBindingList[currentIndex];
 
             _detailBindingList.RaiseListChangedEvents = false;
@@ -890,7 +886,6 @@ namespace ERPLAB.UI.Views.Sales
 
             _detailBindingList.RaiseListChangedEvents = true;
 
-            // 💡 強制大管家重整，並將焦點跟隨到移動後的新位置
             _bsDetail.ResetBindings(false);
             _bsDetail.Position = currentIndex + 1;
         }

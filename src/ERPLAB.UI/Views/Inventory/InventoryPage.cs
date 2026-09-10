@@ -8,13 +8,14 @@ using System.Data;
 namespace ERPLAB.UI.Views.Inventory
 {
     /// <summary>
-    /// 庫存盤點單維護模組 (Master-Detail)
-    /// 核心展示：雙軌庫存比對、一鍵載入引擎、實體硬刪除 (Hard Delete)、TVP 批次寫入。
+    /// 庫存盤點單維護頁面 (Master-Detail Pattern)。
+    /// 繼承自 BasePage，負責處理盤點作業之 CRUD 操作與審核過帳。
+    /// 實作雙軌庫存比對 (帳面與實盤)、系統庫存批次載入、草稿實體刪除 (Hard Delete) 以及 TVP 批次寫入架構。
     /// </summary>
     public partial class InventoryPage : BasePage
     {
         // =====================================================================
-        // 💡 倉儲與主明細狀態快取
+        // 服務注入與全域狀態宣告
         // =====================================================================
         private readonly InventoryService _invService;
         private readonly EmployeeService _empService;
@@ -25,14 +26,15 @@ namespace ERPLAB.UI.Views.Inventory
         private ExtendedBindingList<InventoryMaster> _masterBindingList;
         private ExtendedBindingList<InventoryDetail> _detailBindingList;
 
+        // 表單狀態列舉，用於控制 UI 互動模式與唯讀限制
         private FormState _currentState = FormState.Browse;
-        private int _selectedEmployeeID = 0; // 追蹤負責盤點的員工 ID
+        private int _selectedEmployeeID = 0; // 追蹤負責盤點之員工 ID
 
         public InventoryPage()
         {
             InitializeComponent();
 
-            // 物理優化：強制開啟 Grid 的雙重緩衝
+            // 套用擴充方法開啟雙重緩衝，改善 DataGridView 渲染效能與滾動卡頓
             dgvInventoryMaster.EnableDoubleBuffering(true);
             dgvInventoryDetail.EnableDoubleBuffering(true);
 
@@ -45,57 +47,61 @@ namespace ERPLAB.UI.Views.Inventory
             _masterBindingList = new ExtendedBindingList<InventoryMaster>();
             _detailBindingList = new ExtendedBindingList<InventoryDetail>();
 
-            // 生命週期綁定
+            // 統一於建構子掛載生命週期與控制項事件，確保執行順序
             this.Load += InventoryPage_Load;
             _bsMaster.CurrentChanged += BsMaster_CurrentChanged;
 
-            // 明細盲打試算與渲染事件
+            // 明細快速輸入與即時試算事件綁定
             dgvInventoryDetail.CellEndEdit += DgvInventoryDetail_CellEndEdit;
             dgvInventoryDetail.RowsRemoved += (s, e) => RecalculateDiffAmount();
             dgvInventoryDetail.DefaultValuesNeeded += DgvInventoryDetail_DefaultValuesNeeded;
 
-            // 行號自繪與寬度自適應
+            // 資料列標頭序號繪製與自適應
             dgvInventoryDetail.DataBindingComplete += (s, e) => UpdateRowHeaderNumbers();
             dgvInventoryDetail.RowsAdded += (s, e) => UpdateRowHeaderNumbers();
             dgvInventoryDetail.RowsRemoved += (s, e) => UpdateRowHeaderNumbers();
 
-            // 主檔工具列
+            // 主檔操作工具列
             btnAdd.Click += BtnAdd_Click;
             btnEdit.Click += BtnEdit_Click;
             btnSave.Click += BtnSave_Click;
             btnCancel.Click += BtnCancel_Click;
-            btnDelete.Click += BtnDelete_Click; // 💡 盤點專屬：實體刪除草稿
+            btnDelete.Click += BtnDelete_Click; // 實施盤點單草稿之實體刪除 (Hard Delete)
             btnPost.Click += BtnPost_Click;
 
-            // 檢索與分頁
+            // 資料檢索與分頁控制
             txtKeyword.KeyDown += txtKeyword_KeyDown;
             btnSearch.Click += btnSearch_Click;
             btnRefresh.Click += btnRefresh_Click;
             ucPagination.PageChanged += async (s, e) => await SearchDataAsync();
 
-            // 盤點人員速查引擎
+            // 盤點人員檢索功能
             txtEmployeeNo.KeyDown += txtEmployeeNo_KeyDown;
             txtEmployeeNo.TextChanged += txtEmployeeNo_TextChanged;
             btnLookupEmployee.Click += BtnLookupEmployee_Click;
 
-            // 💡 明細專屬工具列 (一鍵載入與清空)
+            // 明細操作工具列 (載入系統庫存與清空)
             btnLoadSystemStock.Click += BtnLoadSystemStock_Click;
             btnClearDetails.Click += BtnClearDetails_Click;
         }
 
         private async void InventoryPage_Load(object? sender, EventArgs e)
         {
-            // 1. RBAC 權限物理斷路
+            // =====================================================================
+            // 權限檢核 (RBAC)：依據使用者授權動態顯示操作按鈕
+            // 呼叫 BasePage 提供之 RequirePermission 進行控制項的實體隱藏
+            // =====================================================================
             RequirePermission("ACT_INV_ADD", btnAdd);
             RequirePermission("ACT_INV_EDIT", btnEdit);
             RequirePermission("ACT_INV_DEL", btnDelete);
             RequirePermission("ACT_INV_APPROVE", btnPost);
 
+            // 根據新增或修改之授權，決定儲存與取消按鈕之可見性
             bool canWrite = SessionContext.HasPermission("ACT_INV_ADD") || SessionContext.HasPermission("ACT_INV_EDIT");
             btnSave.Visible = canWrite;
             btnCancel.Visible = canWrite;
 
-            // 明細專屬按鈕也受寫入權限管制
+            // 明細操作按鈕亦受寫入權限管控
             btnLoadSystemStock.Visible = canWrite;
             btnClearDetails.Visible = canWrite;
 
@@ -129,14 +135,14 @@ namespace ERPLAB.UI.Views.Inventory
             dgvInventoryDetail.RowHeadersWidthSizeMode = DataGridViewRowHeadersWidthSizeMode.AutoSizeToAllHeaders;
             if (dgvInventoryDetail.Columns.Count == 0)
             {
-                // 💡 [雙軌庫存版型] 明確區分帳面數量(唯讀)與實盤數量(可改)
+                // 雙軌庫存比對設計：明確區分帳面數量 (唯讀) 與實盤數量 (可編輯)
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ProductNo", DataPropertyName = "ProductNo_Display", HeaderText = "商品代碼 (輸入)", Width = 150 });
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ProductName", DataPropertyName = "ProductName_Display", HeaderText = "商品名稱", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
 
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "SystemStock", DataPropertyName = "SystemStock", HeaderText = "帳面庫存", Width = 90, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight, BackColor = Color.WhiteSmoke } });
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "ActualStock", DataPropertyName = "ActualStock", HeaderText = "實盤數量", Width = 90, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight, ForeColor = Color.Blue } });
 
-                // 差異視覺化 (正數為盈，負數為虧)
+                // 差異數量視覺化提示
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "DiffQty_Display", DataPropertyName = "DiffQty_Display", HeaderText = "差異數量", Width = 90, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight, BackColor = Color.WhiteSmoke, Font = new Font("微軟正黑體", 10, FontStyle.Bold) } });
 
                 dgvInventoryDetail.Columns.Add(new DataGridViewTextBoxColumn { Name = "StockPrice", DataPropertyName = "StockPrice", HeaderText = "單位成本", Width = 100, ReadOnly = true, DefaultCellStyle = new DataGridViewCellStyle { Format = "N2", Alignment = DataGridViewContentAlignment.MiddleRight } });
@@ -149,7 +155,7 @@ namespace ERPLAB.UI.Views.Inventory
         }
 
         // =====================================================================
-        // 🔍 [員工速查引擎] (比照客戶速查邏輯)
+        // 盤點員工檢索功能
         // =====================================================================
         private async void txtEmployeeNo_KeyDown(object? sender, KeyEventArgs e)
         {
@@ -210,7 +216,7 @@ namespace ERPLAB.UI.Views.Inventory
         }
 
         // =====================================================================
-        // 🔄 [資料流引擎] 搜尋與主檔綁定
+        // 資料查詢與主檔綁定作業
         // =====================================================================
         private async void txtKeyword_KeyDown(object? sender, KeyEventArgs e)
         {
@@ -249,12 +255,14 @@ namespace ERPLAB.UI.Views.Inventory
 
             try
             {
-                var result = await _invService.GetInventoryOrdersAsync(currentPage, pageSize, keyword); // 實務請傳入 showVoided
+                var result = await _invService.GetInventoryOrdersAsync(currentPage, pageSize, keyword);
 
+                // 若當前頁碼因資料刪除等原因導致越界，重新計算最後頁碼並再次執行查詢
                 if (result.Items.Count == 0 && result.TotalCount > 0)
                 {
                     int correctLastPage = (int)Math.Ceiling((double)result.TotalCount / pageSize);
                     ucPagination.ForceCurrentPage(correctLastPage);
+                    // 修正頁碼後重新查詢，避免遞迴呼叫
                     result = await _invService.GetInventoryOrdersAsync(correctLastPage, pageSize, keyword);
                 }
 
@@ -369,7 +377,6 @@ namespace ERPLAB.UI.Views.Inventory
             txtInventoryNo.Text = "[儲存後自動配發]";
             dtpInventoryDate.Value = DateTime.Now;
 
-            // 實務上這裡可以直接帶入 SessionContext 記錄的工號與名稱
             txtEmployeeNo.Clear();
             txtEmployeeName.Clear();
 
@@ -383,7 +390,7 @@ namespace ERPLAB.UI.Views.Inventory
         }
 
         // =====================================================================
-        // ⚡ [盤點專屬] 系統庫存載入引擎與盲打試算
+        // 系統庫存載入與即時盤盈虧運算
         // =====================================================================
         private async void BtnLoadSystemStock_Click(object? sender, EventArgs e)
         {
@@ -396,10 +403,10 @@ namespace ERPLAB.UI.Views.Inventory
             btnLoadSystemStock.Enabled = false;
             try
             {
-                // 呼叫 ProductRepository 全撈啟用中的商品
-                var result = await _prodService.GetProductsAsync(1, 0, false); // pageSize 0 = 全撈
+                // 獲取所有啟用中之商品庫存資料
+                var result = await _prodService.GetProductsAsync(1, 0, false);
 
-                // 物理凍結 Grid，防止巨量資料引發閃爍
+                // 暫停資料綁定事件觸發，防止大量資料寫入時造成畫面閃爍
                 _detailBindingList.RaiseListChangedEvents = false;
                 _detailBindingList.Clear();
 
@@ -410,14 +417,14 @@ namespace ERPLAB.UI.Views.Inventory
                         ProductID = p.ProductID,
                         ProductNo_Display = p.ProductNo,
                         ProductName_Display = p.ProductName,
-                        SystemStock = p.CurrentStock,   // 💡 絕對帳面快照
-                        ActualStock = p.CurrentStock,   // 💡 省力盤點法：預設等同帳面，只改差異
-                        StockPrice = p.MovingAverageCost    // 💡 採用進價作為成本基準
+                        SystemStock = p.CurrentStock,   // 記錄盤點當下之帳面庫存快照
+                        ActualStock = p.CurrentStock,   // 預設實盤數量等於帳面數量，優化盤點輸入流程
+                        StockPrice = p.MovingAverageCost    // 以移動平均成本作為盤盈虧計算基準
                     });
                 }
 
                 _detailBindingList.RaiseListChangedEvents = true;
-                _bsDetail.ResetBindings(false); // 瞬間重繪
+                _bsDetail.ResetBindings(false); // 觸發全域資料重繪
                 RecalculateDiffAmount();
             }
             catch (Exception ex) { MessageBox.Show($"載入系統庫存失敗：{ex.Message}"); }
@@ -446,7 +453,6 @@ namespace ERPLAB.UI.Views.Inventory
 
             var colName = dgvInventoryDetail.Columns[e.ColumnIndex].Name;
 
-            // 盲打查詢
             if (colName == "ProductNo")
             {
                 string? inputNo = dgvInventoryDetail.Rows[e.RowIndex].Cells["ProductNo"].Value?.ToString();
@@ -460,7 +466,7 @@ namespace ERPLAB.UI.Views.Inventory
                             dgvInventoryDetail.Rows[e.RowIndex].Cells["ProductID"].Value = product.ProductID;
                             dgvInventoryDetail.Rows[e.RowIndex].Cells["ProductName"].Value = product.ProductName;
 
-                            // 💡 盲打帶入時，瞬間擷取系統庫存快照
+                            // 輸入商品代碼後，即時擷取該商品之系統庫存與成本快照
                             dgvInventoryDetail.Rows[e.RowIndex].Cells["SystemStock"].Value = product.CurrentStock;
                             dgvInventoryDetail.Rows[e.RowIndex].Cells["StockPrice"].Value = product.PurchasePrice;
                         }
@@ -474,7 +480,7 @@ namespace ERPLAB.UI.Views.Inventory
                 }
             }
 
-            // 即時試算 (注意此處只監聽實盤數量的改變)
+            // 實盤數量變更時，即時觸發盤盈虧金額試算與畫面重繪
             if (colName == "ActualStock" || colName == "ProductID")
             {
                 dgvInventoryDetail.EndEdit();
@@ -485,11 +491,11 @@ namespace ERPLAB.UI.Views.Inventory
 
         private void RecalculateDiffAmount()
         {
-            // 💡 記憶體極速運算總盤差
+            // 於記憶體中進行盤盈虧總計運算
             decimal totalDiff = _detailBindingList.Sum(d => d.DiffAmount_Display);
 
             lblTotalDiffAmount.Text = $"盤盈虧總計：{totalDiff:N0}";
-            // 視覺防呆：盤盈綠色，盤虧紅色
+            // 依據盤盈虧狀態套用對應之視覺提示 (盤盈為綠色，盤虧為紅色)
             lblTotalDiffAmount.ForeColor = totalDiff >= 0 ? Color.Green : Color.Red;
         }
 
@@ -505,7 +511,8 @@ namespace ERPLAB.UI.Views.Inventory
         }
 
         // =====================================================================
-        // ⚙️ [狀態機引擎] UI 鎖定管理
+        // 狀態機 (State Machine) 控制邏輯
+        // 依據當前操作模式動態切換控制項之啟用與唯讀屬性
         // =====================================================================
         private void SetUIState(FormState state)
         {
@@ -524,7 +531,8 @@ namespace ERPLAB.UI.Views.Inventory
             txtRemark.ReadOnly = !canEditFields;
 
             dgvInventoryDetail.ReadOnly = !canEditFields;
-            // 💡 保護帳面資料不被手殘竄改
+
+            // 保護帳面庫存與成本等機敏欄位維持唯讀狀態
             if (dgvInventoryDetail.Columns["SystemStock"] != null) dgvInventoryDetail.Columns["SystemStock"].ReadOnly = true;
             if (dgvInventoryDetail.Columns["StockPrice"] != null) dgvInventoryDetail.Columns["StockPrice"].ReadOnly = true;
 
@@ -540,7 +548,7 @@ namespace ERPLAB.UI.Views.Inventory
             btnAdd.Enabled = !isEditing;
             btnEdit.Enabled = !isEditing && master != null && isDraft;
 
-            // 💡 [特例] 盤點單專屬的硬刪除按鈕 (取代作廢)
+            // 盤點單專屬控制：允許於草稿狀態下進行實體刪除
             btnDelete.Enabled = !isEditing && master != null && isDraft;
 
             btnSave.Enabled = isEditing;
@@ -559,7 +567,7 @@ namespace ERPLAB.UI.Views.Inventory
         }
 
         // =====================================================================
-        // 💾 [交易引擎] 存檔、硬刪除與過帳
+        // 資料異動作業 (新增、修改、實體刪除與審核過帳)
         // =====================================================================
         private void BtnAdd_Click(object? sender, EventArgs e) => SetUIState(FormState.Add);
         private void BtnEdit_Click(object? sender, EventArgs e) => SetUIState(FormState.Edit);
@@ -593,6 +601,7 @@ namespace ERPLAB.UI.Views.Inventory
                 return;
             }
 
+            // 鎖定操作按鈕，防止非同步處理期間發生重複送出 (Double Click)
             btnSave.Enabled = false;
             btnCancel.Enabled = false;
 
@@ -622,7 +631,7 @@ namespace ERPLAB.UI.Views.Inventory
             if (success)
             {
                 string actionName = _currentState == FormState.Add ? "新增" : "更新";
-                MessageBox.Show($"{actionName}成功！單號：{master.InventoryNo}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{actionName}成功！單號：{master.InventoryNo}", "系統提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 if (_currentState == FormState.Add) ucPagination.ResetToFirstPage();
                 txtKeyword.Clear();
                 SetUIState(FormState.Browse);
@@ -637,7 +646,6 @@ namespace ERPLAB.UI.Views.Inventory
             }
         }
 
-        // 💡 盤點專屬：實體物理刪除 (Hard Delete)
         private async void BtnDelete_Click(object? sender, EventArgs e)
         {
             var master = _bsMaster.Current as InventoryMaster;
@@ -653,8 +661,8 @@ namespace ERPLAB.UI.Views.Inventory
 
                 if (success)
                 {
-                    MessageBox.Show("草稿已徹底刪除。", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    await SearchDataAsync(); // 畫面自動遞補下一筆
+                    MessageBox.Show("草稿已徹底刪除。", "系統提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    await SearchDataAsync();
                 }
             }
         }
@@ -679,7 +687,7 @@ namespace ERPLAB.UI.Views.Inventory
 
                 if (success)
                 {
-                    MessageBox.Show("盤點差異已成功過帳入庫！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("盤點差異已成功過帳入庫！", "系統提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     await SearchDataAsync();
                     _bsMaster.LocateTo<InventoryMaster>(m => m.InventoryNo == master.InventoryNo);
                 }
