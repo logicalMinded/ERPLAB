@@ -1,6 +1,4 @@
-﻿//using ERPLAB.Models.Entities.Contracts;namespace ERPLAB.Models.Entities
-using ERPLAB.Models.Entities;
-
+﻿namespace ERPLAB.Models.Entities
 {
     /// <summary>
     /// 庫存盤點主檔實體 (Entity)。
