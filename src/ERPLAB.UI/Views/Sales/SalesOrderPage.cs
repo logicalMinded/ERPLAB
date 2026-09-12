@@ -382,7 +382,7 @@ namespace ERPLAB.UI.Views.Sales
                     int targetIndex = targetMaster != null ? _bsMaster.IndexOf(targetMaster) : 0;
                     _bsMaster.Position = targetIndex;
 
-                    targetMaster = (SalesMaster)_bsMaster.Current;
+                    targetMaster = (SalesMaster)_bsMaster.Current!;
 
                     // 因已暫停 CurrentChanged 事件，需手動呼叫 UI 更新
                     BindMasterUI(targetMaster);

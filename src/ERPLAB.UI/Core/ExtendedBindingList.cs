@@ -10,7 +10,7 @@ namespace ERPLAB.UI.Core
     {
         private bool _isSorted;
         private ListSortDirection _sortDirection = ListSortDirection.Ascending;
-        private PropertyDescriptor _sortProperty;
+        private PropertyDescriptor? _sortProperty;
 
         public ExtendedBindingList() : base() { }
 
@@ -48,7 +48,7 @@ namespace ERPLAB.UI.Core
         protected override bool SupportsSortingCore => true;
         protected override bool IsSortedCore => _isSorted;
         protected override ListSortDirection SortDirectionCore => _sortDirection;
-        protected override PropertyDescriptor SortPropertyCore => _sortProperty;
+        protected override PropertyDescriptor? SortPropertyCore => _sortProperty;
 
         protected override void ApplySortCore(PropertyDescriptor prop, ListSortDirection direction)
         {

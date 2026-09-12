@@ -199,7 +199,7 @@ namespace ERPLAB.UI
         {
             if (sender is Button btn && btn.Tag is SystemNode node)
             {
-                string classPath = node.FormClassPath;
+                string? classPath = node.FormClassPath;
                 if (string.IsNullOrWhiteSpace(classPath)) return;
 
                 // 檢核防呆：若該頁面已開啟，則直接切換焦點，避免重複實例化
@@ -212,7 +212,7 @@ namespace ERPLAB.UI
                     }
                 }
 
-                Type pageType = Type.GetType(classPath);
+                Type? pageType = Type.GetType(classPath);
                 if (pageType == null)
                 {
                     MessageBox.Show($"系統找不到指定的模組實體：\n{classPath}", "載入失敗", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -221,8 +221,12 @@ namespace ERPLAB.UI
 
                 try
                 {
-                    // 實例化目標頁面 (BasePage) 並將其嵌合至 TabPage 中
-                    UserControl pageInstance = (UserControl)Activator.CreateInstance(pageType);
+                    // 實例化目標頁面並進行型別安全驗證後將其嵌合至 TabPage 中
+                    if (Activator.CreateInstance(pageType) is not UserControl pageInstance)
+                    {
+                        MessageBox.Show($"指定的模組無法建立，或該模組並非 UI 控制項：\n{classPath}", "載入失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
                     pageInstance.Dock = DockStyle.Fill;
 
                     TabPage newTabPage = new TabPage(node.NodeName + "    ")
@@ -245,9 +249,9 @@ namespace ERPLAB.UI
         // 自訂頁籤渲染機制 (GDI+ Custom Tab Rendering)
         // 覆寫預設繪製邏輯，實作狀態高亮提示、色彩切換，以及動態繪製關閉按鈕 (X)。
         // =====================================================================
-        private void TabControlMain_DrawItem(object sender, DrawItemEventArgs e)
+        private void TabControlMain_DrawItem(object? sender, DrawItemEventArgs e)
         {
-            var tabControl = (TabControl)sender;
+            if (sender is not TabControl tabControl) return;
             var tabPage = tabControl.TabPages[e.Index];
             var tabRect = tabControl.GetTabRect(e.Index);
 
@@ -295,7 +299,7 @@ namespace ERPLAB.UI
 
         private void TabControlMain_MouseDown(object? sender, MouseEventArgs e)
         {
-            var tabControl = (TabControl)sender;
+            if (sender is not TabControl tabControl) return;
 
             // 偵測滑鼠點擊座標是否位於關閉按鈕範圍內 (避開 Index 0 之首頁頁籤)
             for (int i = 1; i < tabControl.TabPages.Count; i++)

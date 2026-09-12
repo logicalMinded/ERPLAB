@@ -276,7 +276,7 @@ namespace ERPLAB.UI.Views.Inventory
                     var targetMaster = _masterBindingList.FirstOrDefault(m => m.InventoryID == lastSelectedId) ?? _masterBindingList[0];
                     _bsMaster.Position = _bsMaster.IndexOf(targetMaster);
 
-                    targetMaster = (InventoryMaster)_bsMaster.Current;
+                    targetMaster = (InventoryMaster)_bsMaster.Current!;
                     BindMasterUI(targetMaster);
                     await LoadDetailDataAsync(targetMaster.InventoryID);
                 }
@@ -533,8 +533,15 @@ namespace ERPLAB.UI.Views.Inventory
             dgvInventoryDetail.ReadOnly = !canEditFields;
 
             // 保護帳面庫存與成本等機敏欄位維持唯讀狀態
-            if (dgvInventoryDetail.Columns["SystemStock"] != null) dgvInventoryDetail.Columns["SystemStock"].ReadOnly = true;
-            if (dgvInventoryDetail.Columns["StockPrice"] != null) dgvInventoryDetail.Columns["StockPrice"].ReadOnly = true;
+            if (dgvInventoryDetail.Columns["SystemStock"] is DataGridViewColumn sysStockCol)
+            {
+                sysStockCol.ReadOnly = true;
+            }
+
+            if (dgvInventoryDetail.Columns["StockPrice"] is DataGridViewColumn stockPriceCol)
+            {
+                stockPriceCol.ReadOnly = true;
+            }
 
             dgvInventoryDetail.AllowUserToAddRows = canEditFields;
             dgvInventoryDetail.AllowUserToDeleteRows = canEditFields;

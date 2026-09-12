@@ -136,7 +136,7 @@ namespace ERPLAB.UI.Core
         /// <summary>
         /// 處理 Tuple 格式之驗證結果，並自動處理錯誤提示與游標焦點轉移。
         /// </summary>
-        protected bool EnsureValid((bool IsValid, string ErrorMsg) validationResult, Control focusControl = null)
+        protected bool EnsureValid((bool IsValid, string ErrorMsg) validationResult, Control? focusControl = null)
         {
             if (validationResult.IsValid) return true;
 

@@ -231,7 +231,7 @@ namespace ERPLAB.UI.Views.BaseData
                     // 3. 更新 BindingSource 游標，自動連動 UI 焦點
                     _bsVendors.Position = targetIndex;
 
-                    targetVendor = (Vendor)_bsVendors.Current;
+                    targetVendor = (Vendor)_bsVendors.Current!;
 
                     // 因已暫時解除 CurrentChanged 事件，需手動執行明細綁定
                     BindDetail(targetVendor);
@@ -464,8 +464,11 @@ namespace ERPLAB.UI.Views.BaseData
         {
             SetUIState(FormState.Browse);
             // 放棄修改，還原為 DataGridView 中當前選取之實體資料
-            if (dgvVendors.SelectedRows.Count > 0)
-                BindDetail((Vendor)dgvVendors.SelectedRows[0].DataBoundItem);
+            if (dgvVendors.SelectedRows.Count > 0 &&
+                   dgvVendors.SelectedRows[0].DataBoundItem is Vendor vendor)
+            {
+                BindDetail(vendor);
+            }
             else { ClearDetail(); }
         }
 

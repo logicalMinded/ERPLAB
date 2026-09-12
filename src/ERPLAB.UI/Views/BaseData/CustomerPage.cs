@@ -239,7 +239,7 @@ namespace ERPLAB.UI.Views.BaseData
                     // 3. 更新 BindingSource 游標，自動連動 UI 焦點
                     _bsCustomers.Position = targetIndex;
 
-                    targetCustomer = (Customer)_bsCustomers.Current;
+                    targetCustomer = (Customer)_bsCustomers.Current!;
 
                     // 因已暫時解除 CurrentChanged 事件，需手動執行明細綁定
                     BindDetail(targetCustomer);
@@ -473,7 +473,7 @@ namespace ERPLAB.UI.Views.BaseData
             SetUIState(FormState.Browse);
             // 放棄修改，還原為 DataGridView 中當前選取之實體資料
             if (dgvCustomers.SelectedRows.Count > 0)
-                BindDetail((Customer)dgvCustomers.SelectedRows[0].DataBoundItem);
+                BindDetail((Customer)dgvCustomers.SelectedRows[0].DataBoundItem!);
             else { ClearDetail(); }
         }
 

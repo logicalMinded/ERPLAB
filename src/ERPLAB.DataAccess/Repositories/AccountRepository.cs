@@ -33,7 +33,7 @@ namespace ERPLAB.DataAccess.Repositories
             cmd.Parameters.Add(SqlParameterFactory.CreateVarChar("@PasswordHash", hashString, 255));
 
             // 執行寫入並回傳由資料庫自動生成的 AccountID
-            return (int)await cmd.ExecuteScalarAsync();
+            return (int)(await cmd.ExecuteScalarAsync())!;
         }
 
         /// <summary>

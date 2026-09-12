@@ -35,7 +35,7 @@ namespace ERPLAB.UI.Core
             {
                 // 1. 取得列舉欄位之反射資訊，並以列舉名稱作為預設顯示文字
                 string description = enumValue.ToString();
-                FieldInfo fieldInfo = typeof(TEnum).GetField(description);
+                FieldInfo fieldInfo = typeof(TEnum).GetField(description)!;
 
                 // 2. 嘗試提取 [Description] 屬性 (Attribute) 作為自訂顯示文字
                 var descriptionAttribute = fieldInfo?.GetCustomAttribute<DescriptionAttribute>();

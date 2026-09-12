@@ -15,7 +15,7 @@
         /// 分頁狀態變更事件。
         /// 當使用者觸發翻頁操作或變更每頁顯示筆數時觸發，通知宿主表單重新載入資料。
         /// </summary>
-        public event EventHandler PageChanged;
+        public event EventHandler? PageChanged;
 
         public int CurrentPage { get; private set; } = 1;
 
